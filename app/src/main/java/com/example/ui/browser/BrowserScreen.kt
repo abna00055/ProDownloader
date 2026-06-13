@@ -94,6 +94,18 @@ fun BrowserScreen(
     // التحكم بالـ ModalBottomSheet للملفات المكتشفة
     var showSnifferSheet by remember { mutableStateOf(false) }
 
+    var selectedM3u8Media by remember { mutableStateOf<SniffedMedia?>(null) }
+    var parsedM3u8Options by remember { mutableStateOf<List<com.example.ui.download.M3u8StreamOption>?>(null) }
+    var isParsingM3u8 by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showSnifferSheet) {
+        if (!showSnifferSheet) {
+            selectedM3u8Media = null
+            parsedM3u8Options = null
+            isParsingM3u8 = false
+        }
+    }
+
     // زر العودة للخلف للنظام للتنقل داخل المتصفح
     BackHandler(enabled = webViewInstance?.canGoBack() == true) {
         webViewInstance?.goBack()
@@ -337,115 +349,263 @@ fun BrowserScreen(
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "مستكشف الفيديوهات والمحتوى الأصلي",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 17.sp,
-                            color = Color(0xFF8B5CF6)
-                        )
-                        Text(
-                            text = "تم العثور على قنوات بث للروابط المكتشفة",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.outline
-                        )
+                if (selectedM3u8Media != null) {
+                    // واجهة اختيار جودة البث HLS/M3U8
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = {
+                            selectedM3u8Media = null
+                            parsedM3u8Options = null
+                        }) {
+                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "رجوع")
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "جودات البث المتعددة الـ HLS",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 16.sp,
+                                color = Color(0xFF8B5CF6)
+                            )
+                            Text(
+                                text = selectedM3u8Media?.name ?: "",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
-                    // زر مسح القائمة المكتشفة بالكامل لتنظيفها
-                    TextButton(onClick = {
-                        sniffedUrlsState.clear()
-                        showSnifferSheet = false
-                        Toast.makeText(context, "تم محو ذاكرة المكتشف بنجاح", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Text("مسح الكل", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    }
-                }
+                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
 
-                Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-
-                // قائمة السجلات المكتشفة
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 400.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(sniffedUrlsState) { item ->
-                        Surface(
-                            shadowElevation = 1.dp,
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                            modifier = Modifier.fillMaxWidth()
+                    if (isParsingM3u8) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                // نوع الميديا أيقونة
-                                Box(
+                                CircularProgressIndicator(color = Color(0xFF8B5CF6))
+                                Text("جاري فحص ملف الـ Master Playlist واستخراج الجودات...", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                            }
+                        }
+                    } else if (parsedM3u8Options.isNullOrEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("عذراً، لم نتمكن من العثور على جودات بث منفصلة.", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 350.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(parsedM3u8Options!!) { option ->
+                                Surface(
+                                    shadowElevation = 1.dp,
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                     modifier = Modifier
-                                        .size(38.dp)
-                                        .background(Color(0xFF8B5CF6).copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
-                                    contentAlignment = Alignment.Center
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            downloadViewModel.triggerPrefilledUrl(option.url)
+                                            showSnifferSheet = false
+                                            Toast.makeText(context, "تم تحديد الجودة المتفرعة: ${option.label}", Toast.LENGTH_SHORT).show()
+                                        }
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = null,
-                                        tint = Color(0xFF8B5CF6),
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.name,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = item.url,
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.outline,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    if (item.mimeType.isNotEmpty()) {
-                                        Text(
-                                            text = "نوع الرابط: ${item.mimeType}",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = Color(0xFF10B981)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(38.dp)
+                                                .background(Color(0xFF10B981).copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = Color(0xFF10B981),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = option.label,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                            Text(
+                                                text = "الدقة المستهدفة: ${option.resolution}",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                            Text(
+                                                text = option.url,
+                                                fontSize = 9.sp,
+                                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowForward,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                } else {
+                    // القائمة العادية لروابط الميديا المكتشفة
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "مستكشف الفيديوهات والمحتوى الأصلي",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 17.sp,
+                                color = Color(0xFF8B5CF6)
+                            )
+                            Text(
+                                text = "تم العثور على قنوات بث للروابط المكتشفة",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
 
-                                // زر تشغيل التحميل عبر prefilledUrl
-                                Button(
-                                    onClick = {
-                                        downloadViewModel.triggerPrefilledUrl(item.url)
-                                        showSnifferSheet = false
-                                        Toast.makeText(context, "تم تجهيز الملف للإدراج بقنوات تحميل تفرعية متعددة", Toast.LENGTH_SHORT).show()
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 14.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
+                        // زر مسح القائمة المكتشفة بالكامل لتنظيفها
+                        TextButton(onClick = {
+                            sniffedUrlsState.clear()
+                            showSnifferSheet = false
+                            Toast.makeText(context, "تم محو ذاكرة المكتشف بنجاح", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Text("مسح الكل", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+
+                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                    // قائمة السجلات المكتشفة
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(sniffedUrlsState) { item ->
+                            Surface(
+                                shadowElevation = 1.dp,
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    // نوع الميديا أيقونة
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .background(Color(0xFF8B5CF6).copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Icon(Icons.Default.ArrowDownward, contentDescription = null, modifier = Modifier.size(14.dp))
-                                        Text("تحميل", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8B5CF6),
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.name,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = item.url,
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.outline,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (item.mimeType.isNotEmpty()) {
+                                            Text(
+                                                text = "نوع الرابط: ${item.mimeType}",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color(0xFF10B981)
+                                            )
+                                        }
+                                    }
+
+                                    // زر تشغيل التحميل عبر prefilledUrl
+                                    Button(
+                                        onClick = {
+                                            val isM3u8Url = item.url.lowercase().contains(".m3u8") || 
+                                                    item.mimeType.lowercase().contains("mpegurl") || 
+                                                    item.mimeType.lowercase().contains("m3u8")
+                                            if (isM3u8Url) {
+                                                selectedM3u8Media = item
+                                                isParsingM3u8 = true
+                                                parsedM3u8Options = null
+                                                scope.launch {
+                                                    try {
+                                                        val options = downloadViewModel.parseM3u8MasterPlaylist(item.url)
+                                                        parsedM3u8Options = options
+                                                    } catch (e: Exception) {
+                                                        parsedM3u8Options = emptyList()
+                                                    } finally {
+                                                        isParsingM3u8 = false
+                                                    }
+                                                }
+                                            } else {
+                                                downloadViewModel.triggerPrefilledUrl(item.url)
+                                                showSnifferSheet = false
+                                                Toast.makeText(context, "تم تجهيز الملف للإدراج بقنوات تحميل تفرعية متعددة", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 14.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(Icons.Default.ArrowDownward, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Text("تحميل", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }

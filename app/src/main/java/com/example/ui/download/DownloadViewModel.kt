@@ -260,6 +260,104 @@ class DownloadViewModel(
     }
 
     /**
+     * HLS Parser for parsing M3U8 Master Playlists to extract available stream qualities.
+     */
+    suspend fun parseM3u8MasterPlaylist(masterUrl: String): List<M3u8StreamOption> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val options = mutableListOf<M3u8StreamOption>()
+        try {
+            val client = okhttp3.OkHttpClient.Builder().build()
+            val request = okhttp3.Request.Builder().url(masterUrl).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val content = response.body?.string() ?: return@withContext emptyList()
+                val lines = content.lineSequence().map { it.trim() }.toList()
+
+                var i = 0
+                val size = lines.size
+                while (i < size) {
+                    val line = lines[i]
+                    if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                        // Extract BANDWIDTH
+                        val bandwidthMatch = "BANDWIDTH=(\\d+)".toRegex().find(line)
+                        val bandwidth = bandwidthMatch?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+
+                        // Extract RESOLUTION
+                        val resolutionMatch = "RESOLUTION=([\\dxX]+)".toRegex().find(line)
+                        val resolution = resolutionMatch?.groupValues?.get(1) ?: ""
+
+                        // Look for raw stream URL on the next non-empty lines that don't start with '#'
+                        var nextLineIdx = i + 1
+                        var streamUrl = ""
+                        while (nextLineIdx < size) {
+                            val potentialUrl = lines[nextLineIdx]
+                            if (potentialUrl.isNotEmpty() && !potentialUrl.startsWith("#")) {
+                                streamUrl = potentialUrl
+                                break
+                            }
+                            nextLineIdx++
+                        }
+
+                        if (streamUrl.isNotEmpty()) {
+                            val absoluteUrl = resolveUrl(masterUrl, streamUrl)
+                            val resLabel = if (resolution.isNotEmpty()) {
+                                val height = resolution.substringAfter('x', "").trim()
+                                if (height.isNotEmpty()) "${height}p" else resolution
+                            } else {
+                                "جودة تلقائية"
+                            }
+                            val mbps = if (bandwidth > 0) String.format("%.2f Mbps", bandwidth / 1000000.0) else ""
+                            val label = if (mbps.isNotEmpty()) "$resLabel ($mbps)" else resLabel
+
+                            options.add(
+                                M3u8StreamOption(
+                                    resolution = resolution.ifEmpty { "unknown" },
+                                    bandwidth = bandwidth,
+                                    url = absoluteUrl,
+                                    label = label
+                                )
+                            )
+                        }
+                    }
+                    i++
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("M3u8Parser", "Error parsing master playlist: ${e.message}", e)
+        }
+
+        // Fallback: If no sub-qualities were parsed, the URL might be a direct Media Playlist (chunklist).
+        if (options.isEmpty()) {
+            options.add(
+                M3u8StreamOption(
+                    resolution = "معيارية",
+                    bandwidth = 0L,
+                    url = masterUrl,
+                    label = "البث المباشر المتاح (افتراضي)"
+                )
+            )
+        }
+
+        return@withContext options.sortedByDescending { it.bandwidth }
+    }
+
+    private fun resolveUrl(baseUrl: String, relativeUrl: String): String {
+        if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
+            return relativeUrl
+        }
+        return try {
+            val bUrl = java.net.URL(baseUrl)
+            java.net.URL(bUrl, relativeUrl).toString()
+        } catch (e: Exception) {
+            val lastSlash = baseUrl.lastIndexOf('/')
+            if (lastSlash != -1) {
+                baseUrl.substring(0, lastSlash + 1) + relativeUrl
+            } else {
+                relativeUrl
+            }
+        }
+    }
+
+    /**
      * مستنع المصنع (ViewModel Factory) الموصى به لإدخال الكتل البرمجية بسلاسة دون مسببات للتعارض
      */
     companion object {
@@ -276,3 +374,14 @@ class DownloadViewModel(
         }
     }
 }
+
+/**
+ * خيارات البث المتاحة لروابط HLS/M3U8
+ */
+data class M3u8StreamOption(
+    val resolution: String,
+    val bandwidth: Long,
+    val url: String,
+    val label: String
+)
+
