@@ -1,0 +1,6 @@
+{
+  "name": "Pro Downloader",
+  "description": "تطبيق Android احترافي لإدارة وتنزيل الملفات بسرعات عالية مع دعم تقسيم التحميل والاستئناف والتحميل متعدد الأجزاء.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
