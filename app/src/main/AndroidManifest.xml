@@ -30,6 +30,22 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- استقبال الروابط والنصوص المشاركة من التطبيقات الخارجية -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <!-- تتبع وفتح الروابط المباشرة من الويب -->
+            <intent-filter android:label="تحميل مباشر برابط">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
         </activity>
 
         <!-- تسجيل خدمة التنزيل في الخلفية -->

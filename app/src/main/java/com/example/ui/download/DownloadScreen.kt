@@ -68,7 +68,8 @@ import java.util.Locale
 @Composable
 fun DownloadScreen(
     viewModel: DownloadViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToDetail: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -394,6 +395,9 @@ fun DownloadScreen(
                                         }
                                     }
                                 },
+                                onDetailClick = {
+                                    onNavigateToDetail(item.id)
+                                },
                                 onPause = { viewModel.pauseDownload(item.id) },
                                 onResume = { viewModel.resumeDownload(item.id) },
                                 onCancel = { viewModel.cancelDownload(item.id) },
@@ -498,11 +502,16 @@ fun DownloadScreen(
         }
     }
 
+    val prefilledUrl by viewModel.prefilledUrlFlow.collectAsStateWithLifecycle()
+
     // عرض ورقة إضافة تحميل جديد الذكية
-    if (showAddSheet) {
+    if (showAddSheet || prefilledUrl != null) {
         AddDownloadSheet(
             viewModel = viewModel,
-            onDismiss = { showAddSheet = false }
+            onDismiss = {
+                showAddSheet = false
+                viewModel.clearPrefilledUrl()
+            }
         )
     }
 }
@@ -552,30 +561,38 @@ fun AddDownloadSheet(
         }
     }
 
-    // قراءة تلقائية للرابط من الحافظة عند فتح الواجهة إذا كان يحوي http
-    LaunchedEffect(Unit) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = clipboard.primaryClip
-        if (clip != null && clip.itemCount > 0) {
-            val clipText = clip.getItemAt(0).text.toString()
-            if (clipText.startsWith("http://") || clipText.startsWith("https://")) {
-                urlInput = clipText
-                // بدء فحص الرابط بشكل فوري في تفاعل ذكي
-                sheetError = null
-                viewModel.resolveFileInfoDetailed(
-                    url = clipText,
-                    onFinished = { name, size, type ->
-                        fileNameInput = name
-                        fileSizeToDisplay = size
-                        detectedType = type
-                        isLinkResolvedSuccessfully = true
-                    },
-                    onFailure = { errorString ->
-                        sheetError = errorString
-                        isLinkResolvedSuccessfully = false
-                    }
-                )
-            }
+    val prefilledUrlState by viewModel.prefilledUrlFlow.collectAsStateWithLifecycle()
+
+    // قراءة تلقائية للرابط من الحافظة أو الرابط الممرر للمشاركة
+    LaunchedEffect(prefilledUrlState) {
+        val targetUrl = prefilledUrlState ?: run {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = clipboard.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val clipText = clip.getItemAt(0).text.toString()
+                if (clipText.startsWith("http://") || clipText.startsWith("https://")) {
+                    clipText
+                } else null
+            } else null
+        }
+
+        if (targetUrl != null && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))) {
+            urlInput = targetUrl
+            // بدء فحص الرابط بشكل فوري في تفاعل ذكي
+            sheetError = null
+            viewModel.resolveFileInfoDetailed(
+                url = targetUrl,
+                onFinished = { name, size, type ->
+                    fileNameInput = name
+                    fileSizeToDisplay = size
+                    detectedType = type
+                    isLinkResolvedSuccessfully = true
+                },
+                onFailure = { errorString ->
+                    sheetError = errorString
+                    isLinkResolvedSuccessfully = false
+                }
+            )
         }
     }
 
@@ -936,6 +953,7 @@ fun DownloadItemCardInteractive(
     isInSelectMode: Boolean,
     onLongClick: () -> Unit,
     onClick: () -> Unit,
+    onDetailClick: () -> Unit = {},
     onPause: () -> Unit,
     onResume: () -> Unit,
     onCancel: () -> Unit,
@@ -972,7 +990,7 @@ fun DownloadItemCardInteractive(
                     if (isInSelectMode) {
                         onClick()
                     } else {
-                        // سلوك كرت قياسي
+                        onDetailClick()
                     }
                 }
             ),

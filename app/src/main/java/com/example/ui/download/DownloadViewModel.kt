@@ -48,6 +48,18 @@ class DownloadViewModel(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage = _errorMessage.asStateFlow()
 
+    // رابط تحميل مسبق التجهيز (للـ Share Intent ومستكشف الفيديو)
+    private val _prefilledUrlFlow = MutableStateFlow<String?>(null)
+    val prefilledUrlFlow = _prefilledUrlFlow.asStateFlow()
+
+    fun triggerPrefilledUrl(url: String) {
+        _prefilledUrlFlow.value = url
+    }
+
+    fun clearPrefilledUrl() {
+        _prefilledUrlFlow.value = null
+    }
+
     fun clearError() {
         _errorMessage.value = null
     }
