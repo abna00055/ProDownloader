@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- هذا المسار يسمح بمشاركة ملفات التنزيل العامة التابعة للدليل الخارجي للمستندات والتنزيلات -->
+    <!-- external-path matches /sdcard (all external files) -->
     <external-path name="external_files" path="." />
-    <!-- هذا المسار يسمح بمشاركة ملفات التنزيل الخاصة بالتطبيق -->
+    <!-- external-files-path matches Android/data/com.example/files -->
     <external-files-path name="external_app_files" path="." />
+    <!-- files-path matches /data/data/com.example/files -->
+    <files-path name="internal_files" path="." />
+    <!-- cache-path matches /data/data/com.example/cache -->
+    <cache-path name="internal_cache" path="." />
+    <!-- external-cache-path matches Android/data/com.example/cache -->
+    <external-cache-path name="external_cache" path="." />
 </paths>

@@ -23,10 +23,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.outlined.Folder
 import com.example.ui.browser.BrowserScreen
 import com.example.ui.detail.DownloadDetailScreen
 import com.example.ui.download.DownloadScreen
 import com.example.ui.download.DownloadViewModel
+import com.example.ui.files.FilesScreen
 import com.example.ui.settings.SettingsScreen
 
 /**
@@ -47,7 +50,7 @@ fun MainContainerScreen(
     val currentRoute = navBackStackEntry?.destination?.route
 
     // قائمة الشاشات الأساسية المصنفة لتحديد ما إذا كان يجب إظهار شريط التنقل السفلي
-    val mainRoutes = listOf("downloads", "browser", "settings")
+    val mainRoutes = listOf("downloads", "browser", "files", "settings")
     val shouldShowBottomBar = currentRoute in mainRoutes
 
     Scaffold(
@@ -108,7 +111,33 @@ fun MainContainerScreen(
                         )
                     )
 
-                    // 3. تبويب الإعدادات ومحرك الخيوط
+                    // 3. تبويب الملفات المحملة والمنظمة
+                    NavigationBarItem(
+                        selected = currentRoute == "files",
+                        onClick = {
+                            if (currentRoute != "files") {
+                                navController.navigate("files") {
+                                    popUpTo("downloads") { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        },
+                        icon = {
+                            Icon(
+                                imageVector = if (currentRoute == "files") Icons.Filled.Folder else Icons.Outlined.Folder,
+                                contentDescription = "الملفات"
+                            )
+                        },
+                        label = { Text("الملفات", fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF8B5CF6),
+                            selectedTextColor = Color(0xFF8B5CF6),
+                            indicatorColor = Color(0xFF8B5CF6).copy(alpha = 0.15f)
+                        )
+                    )
+
+                    // 4. تبويب الإعدادات ومحرك الخيوط
                     NavigationBarItem(
                         selected = currentRoute == "settings",
                         onClick = {
@@ -164,6 +193,11 @@ fun MainContainerScreen(
                 BrowserScreen(
                     downloadViewModel = viewModel
                 )
+            }
+
+            // شاشة الملفات والفرز والوصول
+            composable("files") {
+                FilesScreen(viewModel = viewModel)
             }
 
             // شاشة تفضيلات التطبيق وخيوط التحميل

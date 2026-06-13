@@ -18,6 +18,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
 import kotlin.coroutines.coroutineContext
 
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.widget.Toast
+import kotlinx.coroutines.flow.first
+
 /**
  * محرك التنزيل الرئيسي (Download Manager Engine) المسؤول عن:
  * 1. تقسيم الملف لأجزاء وتنزيلها متوازياً (Multi-threaded chunks).
@@ -33,6 +38,20 @@ class DownloadManager(
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder().build()
 ) {
     private val TAG = "DownloadManager"
+
+    private fun isWifiConnected(context: Context): Boolean {
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val network = connectivityManager.activeNetwork ?: return false
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+            return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        } else {
+            @Suppress("DEPRECATION")
+            val info = connectivityManager.activeNetworkInfo ?: return false
+            @Suppress("DEPRECATION")
+            return info.type == ConnectivityManager.TYPE_WIFI
+        }
+    }
 
     // وظائف العمل الفعالة لكل معرّف تنزيل (ID -> Coroutine Job)
     private val activeJobs = ConcurrentHashMap<Long, Job>()
@@ -99,6 +118,17 @@ class DownloadManager(
 
         val job = engineScope.launch {
             try {
+                // Check if wifiOnly setting is enabled
+                val settingsManager = com.example.data.settings.SettingsManager.getInstance(context)
+                val wifiOnly = settingsManager.wifiOnlyFlow.first()
+                if (wifiOnly && !isWifiConnected(context)) {
+                    updateItemStatus(item.copy(status = DownloadStatus.FAILED))
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "التحميل متوقف: تم تفعيل خيار (التحميل عبر WiFi فقط) ولست متصلاً بـ WiFi حالياً.", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
                 // تصفية السجل وتعديل حالته إلى قيد التحميل
                 updateItemStatus(item.copy(status = DownloadStatus.DOWNLOADING))
                 Log.d(TAG, "بدء تشغيل مهمة التحميل لـ ID: ${item.id}")
