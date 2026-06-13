@@ -13,6 +13,8 @@ import com.example.data.download.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 
 /**
  * الـ ViewModel المسؤول عن معالجة وإدارة منطق واجهة المستخدم (MVVM) لتطبيق التنزيلات.
@@ -84,16 +86,28 @@ class DownloadViewModel(
             _isResolving.value = true
             clearError()
             try {
-                val folderFile = File(folderPath)
-                if (!folderFile.exists()) {
-                    folderFile.mkdirs()
+                val finalFilePath = if (folderPath.startsWith("content://")) {
+                    try {
+                        val treeUri = Uri.parse(folderPath)
+                        val pickedDir = DocumentFile.fromTreeUri(app, treeUri)
+                        val newFile = pickedDir?.createFile("application/octet-stream", fileName)
+                        newFile?.uri?.toString() ?: (folderPath + "/" + fileName)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "فشل إنشاء الملف باستخدام SAF، استخدام مسار احتياطي", e)
+                        File(folderPath, fileName).absolutePath
+                    }
+                } else {
+                    val folderFile = File(folderPath)
+                    if (!folderFile.exists()) {
+                        folderFile.mkdirs()
+                    }
+                    File(folderFile, fileName).absolutePath
                 }
-                val finalFile = File(folderFile, fileName)
 
                 val newDownload = DownloadItem(
                     fileName = fileName,
                     url = url,
-                    filePath = finalFile.absolutePath,
+                    filePath = finalFilePath,
                     fileSize = fileSize,
                     downloadedBytes = 0L,
                     status = DownloadStatus.QUEUED,
@@ -106,11 +120,21 @@ class DownloadViewModel(
                 val newId = downloadDao.insert(newDownload)
                 Log.d(TAG, "تم إدراج التحميل مخصص بنجاح بـ معرّف: $newId")
 
-                DownloadService.startService(app, DownloadService.ACTION_START, newId)
+                try {
+                    DownloadService.startService(app, DownloadService.ACTION_START, newId)
+                } catch (serviceException: Exception) {
+                    Log.e("DownloadManager", "فشل بدء خدمة التحميل رقم: $newId في الخلفية", serviceException)
+                    val failedItem = newDownload.copy(
+                        id = newId, 
+                        status = DownloadStatus.FAILED, 
+                        errorMessage = "فشل بدء الخدمة: ${serviceException.localizedMessage}"
+                    )
+                    downloadDao.update(failedItem)
+                }
 
             } catch (e: Exception) {
                 _errorMessage.value = "فشل إضافة سجل التحميل المخصص: ${e.message}"
-                Log.e(TAG, "خطأ في إضافة سجل تحميل مخصص: ${e.message}")
+                Log.e("DownloadManager", "خطأ في إضافة سجل تحميل مخصص: ${e.message}", e)
             } finally {
                 _isResolving.value = false
             }
@@ -192,39 +216,66 @@ class DownloadViewModel(
             _isResolving.value = true
             clearError()
             try {
-                // استخلاص تفاصيل الملف وعنوانه ونوعه من الويب
-                val (fileName, fileType) = downloadManager.resolveFileInfo(url)
+                // 1. استخدام اسم ملف مخمن مبدئياً لتسجيله فوراً في القائمة
+                val guessedName = downloadManager.guessNameFromUrl(url)
+                val guessedFileType = if (guessedName.lowercase().endsWith(".mp3") || guessedName.lowercase().endsWith(".wav")) FileType.AUDIO else FileType.VIDEO
 
-                // تحديد مسار حفظ الملف في الدليل العام للتنزيلات أو مسار التطبيق الخارجي الآمن
-                val downloadDir = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                    ?: app.filesDir
-                val finalFile = File(downloadDir, fileName)
+                // 2. قراءة مسار التنزيلات الافتراضي من Preferences DataStore
+                val settingsManager = com.example.data.settings.SettingsManager.getInstance(app)
+                val defaultDir = settingsManager.defaultDownloadPathFlow.first()
 
-                // تجهيز العنصر في كائن التنزيلات
+                val finalFilePath = if (defaultDir.startsWith("content://")) {
+                    try {
+                        val treeUri = Uri.parse(defaultDir)
+                        val pickedDir = DocumentFile.fromTreeUri(app, treeUri)
+                        val newFile = pickedDir?.createFile("application/octet-stream", guessedName)
+                        newFile?.uri?.toString() ?: (defaultDir + "/" + guessedName)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "فشل إنشاء الملف باستخدام SAF في addDownload، استخدام الاحتياطي", e)
+                        File(defaultDir, guessedName).absolutePath
+                    }
+                } else {
+                    val folderFile = File(defaultDir)
+                    if (!folderFile.exists()) {
+                        folderFile.mkdirs()
+                    }
+                    File(folderFile, guessedName).absolutePath
+                }
+
+                // 3. تجهيز العنصر فوراً بحالة QUEUED لعرضه في الواجهة دون تأخير
                 val newDownload = DownloadItem(
-                    fileName = fileName,
+                    fileName = guessedName,
                     url = url,
-                    filePath = finalFile.absolutePath,
-                    fileSize = 0L, // سيتم تحديثه تلقائياً بواسطة محرك التنزيل
+                    filePath = finalFilePath,
+                    fileSize = 0L,
                     downloadedBytes = 0L,
                     status = DownloadStatus.QUEUED,
-                    fileType = fileType,
+                    fileType = guessedFileType,
                     createdAt = System.currentTimeMillis(),
                     mimeType = "application/octet-stream",
                     threadCount = threadCount
                 )
 
-                // إدراج السجل في قاعدة البيانات للحصول على المعرّف (ID)
+                // إدراج السجل في قاعدة البيانات فوراً للحصول على المعرّف (ID)
                 val newId = downloadDao.insert(newDownload)
+                Log.d(TAG, "تم إدراج التحميل QUEUED فوراً بنجاح بـ معرّف: $newId")
 
-                Log.d(TAG, "تم إدراج التحميل بنجاح في قاعدة البيانات بـ معرّف: $newId")
-
-                // تشغيل خدمة الخلفية Foreground Service للبدء الفعلي بالتحميل
-                DownloadService.startService(app, DownloadService.ACTION_START, newId)
+                // 4. تشغيل خدمة الخلفية Foreground Service للبدء الفعلي بالتحميل
+                try {
+                    DownloadService.startService(app, DownloadService.ACTION_START, newId)
+                } catch (serviceException: Exception) {
+                    Log.e("DownloadManager", "فشل بدء خدمة الخلفية للتحميل رقم $newId", serviceException)
+                    val failedItem = newDownload.copy(
+                        id = newId, 
+                        status = DownloadStatus.FAILED, 
+                        errorMessage = "فشل بدء خدمة التحميل: ${serviceException.localizedMessage}"
+                    )
+                    downloadDao.update(failedItem)
+                }
 
             } catch (e: Exception) {
-                _errorMessage.value = "فشل التعرف على تفاصيل الملف: ${e.message}"
-                Log.e(TAG, "خطأ في إضافة سجل التحميل: ${e.message}")
+                _errorMessage.value = "فشل إضافة سجل التحميل: ${e.message}"
+                Log.e("DownloadManager", "خطأ في إضافة سجل التحميل المباشر: ${e.message}", e)
             } finally {
                 _isResolving.value = false
             }

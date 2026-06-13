@@ -83,6 +83,8 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
+  @Suppress("KOTLIN_OUTOFDATE_DEPENDENCY")
+  implementation("androidx.documentfile:documentfile:1.0.1")
   implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)

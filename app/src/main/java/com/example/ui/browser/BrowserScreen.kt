@@ -648,33 +648,48 @@ data class SniffedMedia(
  * فحص الرابط واعتراض وتجسس للحصل على الفيديوهات المخفية أو المباشرة بالتفصيل
  */
 fun sniffUrl(url: String, sniffedList: MutableList<SniffedMedia>, scope: CoroutineScope) {
-    val cleanUrl = url.lowercase()
+    val cleanUrl = url.lowercase().trim()
 
-    // 1. تصفية الروابط الشائعة التي لا نريد التقاطها كصور أو نصوص أو تتبع
-    if (cleanUrl.contains(".jpg") || cleanUrl.contains(".png") || cleanUrl.contains(".css") ||
-        cleanUrl.contains(".js") || cleanUrl.contains(".woff") || cleanUrl.contains("google-analytics") ||
-        cleanUrl.contains("doubleclick") || cleanUrl.contains("facebook.com")
-    ) {
+    // فلاتر ذكية للتخلص من الإعلانات والإشارات الوهمية والروابط غير المفيدة
+    val blacklist = listOf(
+        "blank", "ad", "placeholder", "track", "analytics", 
+        "doubleclick", "google-analytics", "facebook.com", 
+        "googleads", "adsbygoogle", "telemetry", "metric", "logger"
+    )
+    if (blacklist.any { cleanUrl.contains(it) }) {
+        return
+    }
+
+    // تجاهل روابط ts الفردية الصغيرة جداً ما لم تكن بثاً مباشراً كاملاً m3u8
+    if (cleanUrl.contains(".ts") || cleanUrl.endsWith(".ts")) {
+        return
+    }
+
+    // 1. تصفية الروابط الشائعة التي لا نريد التقاطها كصور أو نصوص
+    val skipExtensions = listOf(
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", 
+        ".css", ".js", ".woff", ".woff2", ".ttf", ".eot", "favicon.ico"
+    )
+    if (skipExtensions.any { cleanUrl.contains(it) }) {
         return
     }
 
     // 2. التحقق من الامتدادات الشهيرة للفيديو والبثوث المباشرة
-    val videoExtensions = listOf(".mp4", ".m3u8", ".ts", ".mkv", ".webm", ".avi", ".mp3", ".ogg", "stream", "video")
+    val videoExtensions = listOf(".mp4", ".m3u8", ".mkv", ".webm", ".avi", ".mp3", ".ogg", "stream", "video")
     val hasVideoExtension = videoExtensions.any { ext -> cleanUrl.contains(ext) }
 
     if (hasVideoExtension) {
-        // التحقق من تكرار الرابط في اللائحة
-        if (sniffedList.none { it.url == url }) {
-            // محاولة تخمين اسم بسيط للملف من الرابط
+        val existingUrls = sniffedList.map { it.url }.toSet()
+        if (!existingUrls.contains(url)) {
             val guessedName = guessNameFromUrl(url)
             val media = SniffedMedia(
                 name = guessedName,
                 url = url,
                 mimeType = "فيديو / بث شبكي مباشر"
             )
-            // إضافة في الـ UI Thread بشكل آمن تزامناً
             scope.launch(Dispatchers.Main) {
-                if (sniffedList.none { it.url == url }) {
+                val currentUrls = sniffedList.map { it.url }.toSet()
+                if (!currentUrls.contains(url)) {
                     sniffedList.add(media)
                 }
             }
@@ -683,7 +698,8 @@ fun sniffUrl(url: String, sniffedList: MutableList<SniffedMedia>, scope: Corouti
     }
 
     // 3. التجسس والـ Sniffing المتقدم عبر HEAD Requests للروابط المشكوك بأصلها
-    if (cleanUrl.startsWith("http") && sniffedList.none { it.url == url }) {
+    val existingUrls = sniffedList.map { it.url }.toSet()
+    if (cleanUrl.startsWith("http") && !existingUrls.contains(url)) {
         scope.launch(Dispatchers.IO) {
             try {
                 val client = OkHttpClient.Builder().build()
@@ -697,7 +713,8 @@ fun sniffUrl(url: String, sniffedList: MutableList<SniffedMedia>, scope: Corouti
                         ) {
                             val guessedName = guessNameFromUrl(url)
                             withContext(Dispatchers.Main) {
-                                if (sniffedList.none { it.url == url }) {
+                                val currentUrls = sniffedList.map { it.url }.toSet()
+                                if (!currentUrls.contains(url)) {
                                     sniffedList.add(
                                         SniffedMedia(
                                             name = guessedName,

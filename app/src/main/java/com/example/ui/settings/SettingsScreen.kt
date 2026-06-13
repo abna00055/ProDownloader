@@ -2,6 +2,7 @@ package com.example.ui.settings
 
 import android.os.Environment
 import android.widget.Toast
+import android.util.Log
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
+import android.content.Intent
+import android.net.Uri
 import com.example.data.settings.SettingsManager
 import kotlinx.coroutines.launch
 import java.io.File
@@ -42,6 +45,30 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settingsManager = remember { SettingsManager.getInstance(context) }
+    val contentResolver = context.contentResolver
+
+    // لاقط المجلدات SAF Tree بطلب صلاحيات الكتابة الدائمة للقرص
+    val folderPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                // حفظ الصلاحية الدائمة (Persistable URI Permission) للكتابة لاحقاً دون طلب متكرر
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                contentResolver.takePersistableUriPermission(uri, takeFlags)
+                
+                scope.launch {
+                    settingsManager.setDefaultDownloadPath(uri.toString())
+                }
+                Toast.makeText(context, "تم تحديد مجلد الحفظ بنجاح وتفعيل رخصة الكتابة المستمرة ✅", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                scope.launch {
+                    settingsManager.setDefaultDownloadPath(uri.toString())
+                }
+                Log.e("SettingsScreen", "Failed to take persistable URI permission, saving raw URI string", e)
+            }
+        }
+    }
 
     // قراءة الحالات اللحظية من DataStore
     val threadCount by settingsManager.threadCountFlow.collectAsState(initial = 4)
@@ -266,14 +293,29 @@ fun SettingsScreen(
                                 .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
                                 .padding(12.dp)
                                 .clickable {
-                                    inputPathText = defaultDownloadPath
-                                    showPathEditDialog = true
+                                    folderPickerLauncher.launch(null)
                                 },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val readablePath = if (defaultDownloadPath.startsWith("content://")) {
+                                try {
+                                    val decoded = Uri.decode(defaultDownloadPath)
+                                    val treeIndex = decoded.indexOf("/tree/")
+                                    if (treeIndex != -1) {
+                                        val suffix = decoded.substring(treeIndex + 6)
+                                        "رخصة مجلد SAF: $suffix"
+                                    } else {
+                                        "مجلد SAF مخصص للتحميل"
+                                    }
+                                } catch(e: Exception) {
+                                    "مجلد نظام مخصص"
+                                }
+                            } else {
+                                defaultDownloadPath
+                            }
                             Text(
-                                text = defaultDownloadPath,
+                                text = readablePath,
                                 fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,

@@ -20,7 +20,9 @@ import kotlin.coroutines.coroutineContext
 
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.widget.Toast
+import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.flow.first
 import com.example.widget.DownloadWidgetProvider
 
@@ -72,6 +74,26 @@ class DownloadManager(
 
     // وظائف العمل الفعالة لكل معرّف تنزيل (ID -> Coroutine Job)
     private val activeJobs = ConcurrentHashMap<Long, Job>()
+
+    /**
+     * تخمين اسم ملف تقريبي من الرابط للتسهيل على المستخدم في التخزين الموضعي
+     */
+    fun guessNameFromUrl(url: String): String {
+        try {
+            val uri = Uri.parse(url)
+            val path = uri.path
+            if (path != null) {
+                val lastSegment = path.substringAfterLast('/')
+                if (lastSegment.isNotEmpty() && lastSegment.contains(".")) {
+                    return lastSegment
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        val epoch = System.currentTimeMillis() % 100000
+        return "download_file_$epoch.mp4"
+    }
 
     // تدفق لحالات الأجهزة النشطة بالوقت الفعلي لتحديث الواجهة البرمجية بسرعة
     private val _downloadProgressFlow = MutableStateFlow<Map<Long, DownloadItem>>(emptyMap())
@@ -198,17 +220,29 @@ class DownloadManager(
                 updateItemStatus(dbItem.copy(status = DownloadStatus.CANCELLED))
 
                 // حذف الملف النهائي والملفات المؤقتة
-                val finalFile = File(dbItem.filePath)
-                if (finalFile.exists()) finalFile.delete()
+                if (dbItem.filePath.startsWith("content://")) {
+                    try {
+                        val docUri = Uri.parse(dbItem.filePath)
+                        val docFile = DocumentFile.fromSingleUri(context, docUri)
+                        if (docFile != null && docFile.exists()) {
+                            docFile.delete()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "فصل حذف سجل التخزين الذكي SAF: ${e.message}")
+                    }
+                } else {
+                    val finalFile = File(dbItem.filePath)
+                    if (finalFile.exists()) finalFile.delete()
+                }
 
-                // حذف الأجزاء المؤقتة
+                // حذف الأجزاء المؤقتة من مجلد الكاش الآمن
                 for (i in 0 until dbItem.threadCount) {
-                    val partFile = File(dbItem.filePath + ".part_$i")
+                    val partFile = File(context.cacheDir, "download_${dbItem.id}_part_$i")
                     if (partFile.exists()) {
                         partFile.delete()
                     }
                 }
-                Log.d(TAG, "تم إلغاء التنزيل وحذف الأجزاء لـ ID: $id")
+                Log.d(TAG, "تم إلغاء التنزيل وحذف الأجزاء والمستندات لـ ID: $id")
             }
         }
     }
@@ -284,8 +318,12 @@ class DownloadManager(
 
         // 2. التحقق من المساحة المتوفرة قبل البدء
         if (totalLength > 0) {
-            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
-            val stat = StatFs(dir.path)
+            val isSaf = dbItem.filePath.startsWith("content://")
+            val checkDir = if (isSaf) context.cacheDir else {
+                val f = File(dbItem.filePath)
+                f.parentFile ?: (context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir)
+            }
+            val stat = StatFs(checkDir.path)
             val availableSpace = stat.availableBytes
             if (availableSpace < totalLength) {
                 val errorMsg = DownloadError.InsufficientSpace(totalLength, availableSpace).toUserMessage()
@@ -295,9 +333,11 @@ class DownloadManager(
             }
         }
 
-        // إنشاء المجلد الأب إذا لم يكن موجوداً
-        val finalFile = File(dbItem.filePath)
-        finalFile.parentFile?.mkdirs()
+        // إنشاء المجلد الأب إذا لم يكن مجلداً ذكياً SAF
+        if (!dbItem.filePath.startsWith("content://")) {
+            val finalFile = File(dbItem.filePath)
+            finalFile.parentFile?.mkdirs()
+        }
 
         // 3. اتخاذ قرار بالتقسيم أو التحميل بخيط واحد
         val finalThreadCount = if (supportsRange && totalLength > 0) dbItem.threadCount else 1
@@ -334,10 +374,10 @@ class DownloadManager(
                     delay(1000)
                     val speed = speedTracker.getInstantaneousSpeedAndReset()
 
-                    // حساب التقدم الكلي بجمع أحجام ملفات الأجزاء المحملة فعلياً
+                    // حساب التقدم الكلي بجمع أحجام ملفات الأجزاء المحملة فعلياً من الكاش
                     var totalDownloaded: Long = 0
                     parts.forEach { p ->
-                        val partFile = File(dbItem.filePath + ".part_${p.index}")
+                        val partFile = File(context.cacheDir, "download_${dbItem.id}_part_${p.index}")
                         if (partFile.exists()) {
                             totalDownloaded += partFile.length()
                         }
@@ -382,8 +422,19 @@ class DownloadManager(
             if (results.all { it }) {
                 Log.d(TAG, "تحميل جميع الأجزاء تم بنجاح. بدء الدمج...")
                 mergeParts(dbItem, finalThreadCount)
+                val finalDownloadedBytes = if (totalLength > 0) totalLength else {
+                    if (dbItem.filePath.startsWith("content://")) {
+                        try {
+                            val docUri = Uri.parse(dbItem.filePath)
+                            val docFile = DocumentFile.fromSingleUri(context, docUri)
+                            docFile?.length() ?: 0L
+                        } catch (e: Exception) { 0L }
+                    } else {
+                        File(dbItem.filePath).length()
+                    }
+                }
                 val completedItem = dbItem.copy(
-                    downloadedBytes = if (totalLength > 0) totalLength else File(dbItem.filePath).length(),
+                    downloadedBytes = finalDownloadedBytes,
                     status = DownloadStatus.COMPLETED,
                     errorMessage = null
                 )
@@ -442,7 +493,7 @@ class DownloadManager(
         part: DownloadPart,
         speedTracker: RealTimeSpeedTracker
     ): Boolean = withContext(DispatchContexts.IO) {
-        val partFile = File(dbItem.filePath + ".part_${part.index}")
+        val partFile = File(context.cacheDir, "download_${dbItem.id}_part_${part.index}")
         var currentBytes = if (partFile.exists()) partFile.length() else 0L
 
         // التحقق من الاكتمال المسبق للجزء في حال استؤنف بعد نهايته
@@ -508,19 +559,40 @@ class DownloadManager(
      * دمج أجزاء الملف المؤقتة في الملف النهائي
      */
     private suspend fun mergeParts(dbItem: DownloadItem, threadCount: Int) = withContext(DispatchContexts.IO) {
-        val destFile = File(dbItem.filePath)
-        if (destFile.exists()) {
-            destFile.delete()
-        }
-
-        FileOutputStream(destFile).use { output ->
-            for (i in 0 until threadCount) {
-                val partFile = File(dbItem.filePath + ".part_$i")
-                if (partFile.exists()) {
-                    partFile.inputStream().use { input ->
-                        input.copyTo(output)
+        val isSaf = dbItem.filePath.startsWith("content://")
+        if (isSaf) {
+            try {
+                val docUri = Uri.parse(dbItem.filePath)
+                context.contentResolver.openOutputStream(docUri, "rwt")?.use { output ->
+                    for (i in 0 until threadCount) {
+                        val partFile = File(context.cacheDir, "download_${dbItem.id}_part_$i")
+                        if (partFile.exists()) {
+                            partFile.inputStream().use { input ->
+                                input.copyTo(output)
+                            }
+                            partFile.delete() // حذف جزء الملف المؤقت بعد دمجه بنجاح
+                        }
                     }
-                    partFile.delete() // حذف جزء الملف المؤقت بعد دمجه بنجاح
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "فشل دمج الأجزاء لملف SAF: ${e.message}", e)
+                throw e
+            }
+        } else {
+            val destFile = File(dbItem.filePath)
+            if (destFile.exists()) {
+                destFile.delete()
+            }
+
+            FileOutputStream(destFile).use { output ->
+                for (i in 0 until threadCount) {
+                    val partFile = File(context.cacheDir, "download_${dbItem.id}_part_$i")
+                    if (partFile.exists()) {
+                        partFile.inputStream().use { input ->
+                            input.copyTo(output)
+                        }
+                        partFile.delete() // حذف جزء الملف المؤقت بعد دمجه بنجاح
+                    }
                 }
             }
         }

@@ -46,8 +46,8 @@ class SettingsManager private constructor(private val context: Context) {
 
     // Default save directory definition
     private val defaultDownloadDir: String by lazy {
-        context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)?.absolutePath 
-            ?: context.filesDir.absolutePath
+        val publicDownloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+        File(publicDownloads, "ProDownloader").absolutePath
     }
 
     // Flows for reading settings
