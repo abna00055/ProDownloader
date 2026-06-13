@@ -22,6 +22,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.widget.Toast
 import kotlinx.coroutines.flow.first
+import com.example.widget.DownloadWidgetProvider
 
 /**
  * محرك التنزيل الرئيسي (Download Manager Engine) المسؤول عن:
@@ -50,6 +51,22 @@ class DownloadManager(
             val info = connectivityManager.activeNetworkInfo ?: return false
             @Suppress("DEPRECATION")
             return info.type == ConnectivityManager.TYPE_WIFI
+        }
+    }
+
+    private fun isNetworkConnected(context: Context): Boolean {
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val network = connectivityManager.activeNetwork ?: return false
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+            return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        } else {
+            @Suppress("DEPRECATION")
+            val info = connectivityManager.activeNetworkInfo ?: return false
+            @Suppress("DEPRECATION")
+            return info.isConnected
         }
     }
 
@@ -212,6 +229,13 @@ class DownloadManager(
     private suspend fun performDownload(id: Long) = withContext(DispatchContexts.IO) {
         var dbItem = downloadDao.getDownloadById(id) ?: return@withContext
 
+        // 0. التحقق من اتصال الإنترنت العام
+        if (!isNetworkConnected(context)) {
+            val errorMsg = DownloadError.NoNetwork.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            return@withContext
+        }
+
         // 1. فحص معلومات الاتصال والحصول على الحجم الكلي ودعم Range
         val checkRequest = Request.Builder().url(dbItem.url).head().build()
         var totalLength = dbItem.fileSize
@@ -229,9 +253,27 @@ class DownloadManager(
                         mimeType = response.header("Content-Type") ?: dbItem.mimeType
                         val acceptRanges = response.header("Accept-Ranges")
                         supportsRange = acceptRanges == "bytes" || response.header("Content-Range") != null
+                    } else {
+                        when (response.code) {
+                            404, 410 -> throw java.io.FileNotFoundException("Invalid link")
+                            401, 403 -> throw java.security.AccessControlException("Refused connection")
+                            else -> throw Exception("HTTP error code: ${response.code}")
+                        }
                     }
                 }
             }
+        } catch (e: java.io.FileNotFoundException) {
+            val errorMsg = DownloadError.InvalidLink.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            return@withContext
+        } catch (e: java.security.AccessControlException) {
+            val errorMsg = DownloadError.RefusedConnection.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            return@withContext
+        } catch (e: java.net.SocketTimeoutException) {
+            val errorMsg = DownloadError.Timeout.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            return@withContext
         } catch (e: Exception) {
             Log.e(TAG, "فشل فحص الحجم، سنحاول التحميل المباشر: ${e.message}")
         }
@@ -241,10 +283,16 @@ class DownloadManager(
         updateItemStatus(dbItem)
 
         // 2. التحقق من المساحة المتوفرة قبل البدء
-        if (totalLength > 0 && !hasEnoughStorageSpace(totalLength)) {
-            Log.e(TAG, "لا توجد مساحة كافية على الجهاز!")
-            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED))
-            return@withContext
+        if (totalLength > 0) {
+            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+            val stat = StatFs(dir.path)
+            val availableSpace = stat.availableBytes
+            if (availableSpace < totalLength) {
+                val errorMsg = DownloadError.InsufficientSpace(totalLength, availableSpace).toUserMessage()
+                Log.e(TAG, "لا توجد مساحة كافية على الجهاز!")
+                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                return@withContext
+            }
         }
 
         // إنشاء المجلد الأب إذا لم يكن موجوداً
@@ -322,6 +370,7 @@ class DownloadManager(
 
                     // تحديث دوري لقاعدة البيانات للتخزين الدائم
                     downloadDao.update(updatedItem)
+                    DownloadWidgetProvider.updateAllWidgets(context)
                 }
             }
 
@@ -335,14 +384,20 @@ class DownloadManager(
                 mergeParts(dbItem, finalThreadCount)
                 val completedItem = dbItem.copy(
                     downloadedBytes = if (totalLength > 0) totalLength else File(dbItem.filePath).length(),
-                    status = DownloadStatus.COMPLETED
+                    status = DownloadStatus.COMPLETED,
+                    errorMessage = null
                 )
                 updateItemStatus(completedItem)
                 onDownloadCompletedListener?.invoke(completedItem)
                 Log.d(TAG, "اكتمل التنزيل والدمج للملف: ${dbItem.fileName}")
             } else {
                 Log.e(TAG, "فشلت واحدة أو أكثر من الأجزاء في التحميل.")
-                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED))
+                val errorMsg = if (!isNetworkConnected(context)) {
+                    DownloadError.NoNetwork.toUserMessage()
+                } else {
+                    DownloadError.Timeout.toUserMessage()
+                }
+                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
             }
         }
     }
@@ -492,6 +547,7 @@ class DownloadManager(
      */
     private suspend fun updateItemStatus(item: DownloadItem) {
         downloadDao.update(item)
+        DownloadWidgetProvider.updateAllWidgets(context)
     }
 
     private fun removeFromProgressFlow(id: Long) {

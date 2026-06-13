@@ -19,7 +19,8 @@ data class DownloadItem(
     val fileType: FileType,
     val createdAt: Long = System.currentTimeMillis(),
     val mimeType: String,
-    val threadCount: Int = 4
+    val threadCount: Int = 4,
+    val errorMessage: String? = null
 ) {
     // سرعة التحميل اللحظية (بالبايت في الثانية) - لا يتم حفظها في قاعدة البيانات ولكنه يحسب في الذاكرة أثناء النشاط
     @Ignore

@@ -343,26 +343,54 @@ fun DownloadScreen(
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.Center,
                             modifier = Modifier.padding(32.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                                modifier = Modifier.size(64.dp)
-                            )
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .padding(bottom = 20.dp)
+                                    .size(120.dp)
+                                    .background(
+                                        Brush.radialGradient(
+                                            colors = listOf(
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    )
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.size(80.dp),
+                                    tonalElevation = 4.dp
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (searchQuery.isNotEmpty()) Icons.Default.Search else Icons.Default.Download,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(36.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Text(
-                                text = if (searchQuery.isNotEmpty()) "لا توجد نتائج بحث مطابقة لمصطلح '$searchQuery'" else "تصنيف فارغ",
-                                fontSize = 16.sp,
+                                text = if (searchQuery.isNotEmpty()) "لا توجد نتائج بحث مطابقة" else "قائمة التنزيلات فارغة",
+                                fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "اضغط على زر '+' بالأسفل لإدراج وتنزيل ملفاتك المفضلة بسرعة خارقة وقنوات متعددة.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.outline,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (searchQuery.isNotEmpty()) "جرّب التحقق من دقة الاسم أو البحث بكلمات أبسط للوصول للملف." else "ابدأ بتنزيل ملفاتك المفضلة! انقر على زر إضافة '+' بالأسفل لتنزيل الفيديوهات ومقاطع الصوت بسرعة هائلة.",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                lineHeight = 20.sp
                             )
                         }
                     }
@@ -1214,6 +1242,36 @@ fun DownloadItemCardInteractive(
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
+
+                // عرض رسالة الخطأ العربية إذا كانت متوفرة للفشل أو التعطل
+                if (item.status == DownloadStatus.FAILED && !item.errorMessage.isNullOrEmpty()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = item.errorMessage,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
 
                 // الأزرار والتفاعلات الجماعية والتحكم بالملفات المستهدفة
                 if (!isInSelectMode) {

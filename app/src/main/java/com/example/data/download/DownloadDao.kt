@@ -29,4 +29,7 @@ interface DownloadDao {
 
     @Query("SELECT * FROM downloads WHERE id = :id")
     fun getDownloadByIdFlow(id: Long): Flow<DownloadItem?>
+
+    @Query("SELECT * FROM downloads WHERE status = 'DOWNLOADING' OR status = 'QUEUED'")
+    fun getActiveDownloadsSync(): List<DownloadItem>
 }
