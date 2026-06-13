@@ -27,6 +27,8 @@ class ProDownloaderApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // تهيئات عامة للتطبيق إن لزم الأمر
+        // تهيئة محركات التحليل والدمج الصوتي والفيديو المتطور
+        com.example.youtubedl.YoutubeDL.getInstance().init(this)
+        com.example.youtubedl.FFmpeg.getInstance().init(this)
     }
 }

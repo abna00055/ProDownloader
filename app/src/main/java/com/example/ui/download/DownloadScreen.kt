@@ -9,8 +9,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
@@ -69,7 +72,8 @@ import java.util.Locale
 fun DownloadScreen(
     viewModel: DownloadViewModel,
     modifier: Modifier = Modifier,
-    onNavigateToDetail: (Long) -> Unit = {}
+    onNavigateToDetail: (Long) -> Unit = {},
+    onNavigateToBrowser: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -511,7 +515,8 @@ fun DownloadScreen(
             onDismiss = {
                 showAddSheet = false
                 viewModel.clearPrefilledUrl()
-            }
+            },
+            onFallbackToBrowser = { url -> onNavigateToBrowser() }
         )
     }
 }
@@ -523,7 +528,8 @@ fun DownloadScreen(
 @Composable
 fun AddDownloadSheet(
     viewModel: DownloadViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onFallbackToBrowser: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -544,8 +550,13 @@ fun AddDownloadSheet(
 
     var isFolderDropdownExpanded by remember { mutableStateOf(false) }
     val isResolving by viewModel.isResolving.collectAsStateWithLifecycle()
+    var isResolvingYoutubeDL by remember { mutableStateOf(false) }
     var sheetError by remember { mutableStateOf<String?>(null) }
     var isLinkResolvedSuccessfully by remember { mutableStateOf(false) }
+
+    // YoutubeDL format variables
+    var videoInfo by remember { mutableStateOf<com.example.youtubedl.VideoInfo?>(null) }
+    var selectedFormat by remember { mutableStateOf<com.example.youtubedl.VideoFormat?>(null) }
 
     // لاقط مجلدات مخصص
     val pickerLauncher = rememberLauncherForActivityResult(
@@ -553,7 +564,6 @@ fun AddDownloadSheet(
     ) { uri ->
         if (uri != null) {
             selectedFolderLabel = "مجلد مخصص: ${uri.lastPathSegment}"
-            // استخدام مسار خارجي آمن أو كاش التطبيق
             val resolvedPath = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.absolutePath 
                 ?: context.filesDir.absolutePath
             selectedFolderPath = resolvedPath
@@ -562,6 +572,42 @@ fun AddDownloadSheet(
     }
 
     val prefilledUrlState by viewModel.prefilledUrlFlow.collectAsStateWithLifecycle()
+
+    fun startHybridResolution(url: String) {
+        if (url.trim().isEmpty() || !url.startsWith("http")) {
+            sheetError = "الرجاء إدخال رابط تحميل صحيح يبدأ بـ http أو https."
+            isLinkResolvedSuccessfully = false
+            return
+        }
+
+        isLinkResolvedSuccessfully = false
+        sheetError = null
+        isResolvingYoutubeDL = true
+        videoInfo = null
+        selectedFormat = null
+
+        scope.launch {
+            try {
+                // محاولة استخدام محرك YoutubeDL المدمج لاستخراج الجودات
+                val info = com.example.youtubedl.YoutubeDL.getInstance().getInfo(url)
+                videoInfo = info
+                fileNameInput = info.title
+                selectedFormat = info.formats.firstOrNull()
+                detectedType = FileType.VIDEO
+                fileSizeToDisplay = selectedFormat?.fileSize ?: 0L
+                isLinkResolvedSuccessfully = true
+            } catch (e: Exception) {
+                // إذا فشل YoutubeDL أو كان الرابط غير مدعوم، يتم توجيه المستخدم تلقائياً إلى شاشة BrowserScreen
+                Log.d("AddDownloadSheet", "فشل تحليل YoutubeDL للرابط، جاري تحويل العميل للمستكشف: ${e.message}")
+                Toast.makeText(context, "الرابط يحتاج لفحص عميق. جاري توجيهك إلى المتصفح المدمج المطور...", Toast.LENGTH_LONG).show()
+                viewModel.triggerPrefilledUrl(url)
+                onFallbackToBrowser(url)
+                onDismiss()
+            } finally {
+                isResolvingYoutubeDL = false
+            }
+        }
+    }
 
     // قراءة تلقائية للرابط من الحافظة أو الرابط الممرر للمشاركة
     LaunchedEffect(prefilledUrlState) {
@@ -578,21 +624,7 @@ fun AddDownloadSheet(
 
         if (targetUrl != null && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))) {
             urlInput = targetUrl
-            // بدء فحص الرابط بشكل فوري في تفاعل ذكي
-            sheetError = null
-            viewModel.resolveFileInfoDetailed(
-                url = targetUrl,
-                onFinished = { name, size, type ->
-                    fileNameInput = name
-                    fileSizeToDisplay = size
-                    detectedType = type
-                    isLinkResolvedSuccessfully = true
-                },
-                onFailure = { errorString ->
-                    sheetError = errorString
-                    isLinkResolvedSuccessfully = false
-                }
-            )
+            startHybridResolution(targetUrl)
         }
     }
 
@@ -612,11 +644,12 @@ fun AddDownloadSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
+                .padding(bottom = 32.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                text = "تحميل ملف جديد فوري",
+                text = "تحميل فيديو/ملف ذكي",
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 20.sp,
                 color = Color(0xFF8B5CF6)
@@ -628,21 +661,7 @@ fun AddDownloadSheet(
                 onValueChange = { input ->
                     urlInput = input
                     if (input.startsWith("http")) {
-                        isLinkResolvedSuccessfully = false
-                        sheetError = null
-                        viewModel.resolveFileInfoDetailed(
-                            url = input,
-                            onFinished = { name, size, type ->
-                                fileNameInput = name
-                                fileSizeToDisplay = size
-                                detectedType = type
-                                isLinkResolvedSuccessfully = true
-                            },
-                            onFailure = { errorString ->
-                                sheetError = errorString
-                                isLinkResolvedSuccessfully = false
-                            }
-                        )
+                        startHybridResolution(input)
                     }
                 },
                 label = { Text("رابط التحميل الإلكتروني (URL)") },
@@ -658,6 +677,8 @@ fun AddDownloadSheet(
                             urlInput = "" 
                             fileNameInput = ""
                             isLinkResolvedSuccessfully = false
+                            videoInfo = null
+                            selectedFormat = null
                         }) {
                             Icon(Icons.Default.Close, contentDescription = "مسح")
                         }
@@ -669,19 +690,7 @@ fun AddDownloadSheet(
                                 if (clip != null && clip.itemCount > 0) {
                                     val text = clip.getItemAt(0).text.toString()
                                     urlInput = text
-                                    viewModel.resolveFileInfoDetailed(
-                                        url = text,
-                                        onFinished = { name, size, type ->
-                                            fileNameInput = name
-                                            fileSizeToDisplay = size
-                                            detectedType = type
-                                            isLinkResolvedSuccessfully = true
-                                        },
-                                        onFailure = { errorString ->
-                                            sheetError = errorString
-                                            isLinkResolvedSuccessfully = false
-                                        }
-                                    )
+                                    startHybridResolution(text)
                                 }
                             },
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
@@ -695,7 +704,7 @@ fun AddDownloadSheet(
             )
 
             // مؤشر حالة الفحص والاستطلاع
-            if (isResolving) {
+            if (isResolvingYoutubeDL) {
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
                     shape = RoundedCornerShape(12.dp),
@@ -707,7 +716,7 @@ fun AddDownloadSheet(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.5.dp)
-                        Text("جاري استخلاص وقراءة معلومات الملف المباشرة بالـ Head Request...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("جاري استخلاص وقراءة الجودات المتوفرة بمحرك YoutubeDL...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -742,34 +751,74 @@ fun AddDownloadSheet(
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    // تفاصيل الملف المستخلص
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Surface(
-                                color = getFileTypeBadging(detectedType).first.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.size(38.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = getFileTypeBadging(detectedType).third,
-                                        contentDescription = null,
-                                        tint = getFileTypeBadging(detectedType).second,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                    // عرض الجودات المستخرجة من YoutubeDL
+                    if (videoInfo != null) {
+                        Text(
+                            text = "الجودات وتنسيقات الفيديو المتاحة بالمنصة:",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            videoInfo?.formats?.forEach { format ->
+                                val isSelected = selectedFormat?.formatId == format.formatId
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedFormat = format
+                                            fileSizeToDisplay = format.fileSize
+                                            detectedType = if (format.formatId == "audio_only") FileType.AUDIO else FileType.VIDEO
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        width = 1.5.dp,
+                                        color = if (isSelected) Color(0xFF8B5CF6) else MaterialTheme.colorScheme.outlineVariant
+                                    ),
+                                    color = if (isSelected) Color(0xFF8B5CF6).copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = {
+                                                selectedFormat = format
+                                                fileSizeToDisplay = format.fileSize
+                                                detectedType = if (format.formatId == "audio_only") FileType.AUDIO else FileType.VIDEO
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF8B5CF6))
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = format.formatName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                            Text(
+                                                text = "الامتداد: ${format.ext} | الحجم المتوقع: ${formatBytes(format.fileSize)}",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                        if (format.isMergeRequired) {
+                                            Surface(
+                                                color = Color(0xFF10B981).copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = "دمج FFmpeg تلقائي",
+                                                    color = Color(0xFF10B981),
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                            }
-                            Column {
-                                Text("نوع الملف المستشف: ${getFileTypeArabic(detectedType)}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text("حجم الملف المتوقع: ${formatBytes(fileSizeToDisplay)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                             }
                         }
                     }
@@ -882,9 +931,12 @@ fun AddDownloadSheet(
             Button(
                 onClick = {
                     if (urlInput.isNotEmpty() && fileNameInput.isNotEmpty()) {
+                        val ext = selectedFormat?.ext ?: "mp4"
+                        val finalUrl = selectedFormat?.url ?: urlInput
+                        val finalFileName = if (fileNameInput.contains(".")) fileNameInput else "$fileNameInput.$ext"
                         viewModel.addDownloadWithDetails(
-                            url = urlInput,
-                            fileName = fileNameInput,
+                            url = finalUrl,
+                            fileName = finalFileName,
                             folderPath = selectedFolderPath,
                             threadCount = selectedThreads.toInt(),
                             fileType = detectedType,
@@ -893,7 +945,7 @@ fun AddDownloadSheet(
                         onDismiss()
                     }
                 },
-                enabled = isLinkResolvedSuccessfully && !isResolving,
+                enabled = isLinkResolvedSuccessfully && !isResolvingYoutubeDL,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
@@ -902,16 +954,18 @@ fun AddDownloadSheet(
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
                 contentPadding = PaddingValues()
             ) {
-                val buttonAlpha = if (isLinkResolvedSuccessfully) 1f else 0.5f
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(primaryGradient)
                         .clickable(enabled = isLinkResolvedSuccessfully) {
                             if (urlInput.isNotEmpty() && fileNameInput.isNotEmpty()) {
+                                val ext = selectedFormat?.ext ?: "mp4"
+                                val finalUrl = selectedFormat?.url ?: urlInput
+                                val finalFileName = if (fileNameInput.contains(".")) fileNameInput else "$fileNameInput.$ext"
                                 viewModel.addDownloadWithDetails(
-                                    url = urlInput,
-                                    fileName = fileNameInput,
+                                    url = finalUrl,
+                                    fileName = finalFileName,
                                     folderPath = selectedFolderPath,
                                     threadCount = selectedThreads.toInt(),
                                     fileType = detectedType,

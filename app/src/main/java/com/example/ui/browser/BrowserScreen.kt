@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.download.DownloadViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,6 +74,19 @@ fun BrowserScreen(
     var isPageLoading by remember { mutableStateOf(false) }
 
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+
+    // الاستماع للرابط الممرر للتصفح التلقائي عند التحويل للـ Fallback
+    val prefilledUrlState by downloadViewModel.prefilledUrlFlow.collectAsStateWithLifecycle()
+
+    LaunchedEffect(prefilledUrlState, webViewInstance) {
+        val prefUrl = prefilledUrlState
+        if (!prefUrl.isNullOrEmpty() && prefUrl.startsWith("http")) {
+            urlInput = prefUrl
+            currentUrl = prefUrl
+            webViewInstance?.loadUrl(prefUrl)
+            downloadViewModel.clearPrefilledUrl()
+        }
+    }
 
     // القائمة الذكية للملفات المكتشفة (Sniffed Media List)
     val sniffedUrlsState = remember { mutableStateListOf<SniffedMedia>() }

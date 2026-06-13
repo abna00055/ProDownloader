@@ -148,6 +148,13 @@ fun MainContainerScreen(
                     viewModel = viewModel,
                     onNavigateToDetail = { downloadId ->
                         navController.navigate("detail/$downloadId")
+                    },
+                    onNavigateToBrowser = {
+                        navController.navigate("browser") {
+                            popUpTo("downloads") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 )
             }
