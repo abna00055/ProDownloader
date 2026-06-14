@@ -86,7 +86,10 @@ class DownloadService : Service() {
                     serviceScope.launch {
                         val dbItem = app.downloadDao.getDownloadById(downloadId)
                         if (dbItem != null) {
-                            downloadManager.startDownload(dbItem)
+                            val verifiedItem = checkResponseCodeAndFailIfNeeded(dbItem)
+                            if (verifiedItem.status != DownloadStatus.FAILED) {
+                                downloadManager.startDownload(verifiedItem)
+                            }
                         }
                     }
                 }
@@ -97,7 +100,10 @@ class DownloadService : Service() {
                     serviceScope.launch {
                         val dbItem = app.downloadDao.getDownloadById(downloadId)
                         if (dbItem != null) {
-                            downloadManager.startDownload(dbItem)
+                            val verifiedItem = checkResponseCodeAndFailIfNeeded(dbItem)
+                            if (verifiedItem.status != DownloadStatus.FAILED) {
+                                downloadManager.startDownload(verifiedItem)
+                            }
                         }
                     }
                 }
@@ -108,6 +114,63 @@ class DownloadService : Service() {
         }
 
         return START_NOT_STICKY
+    }
+
+    private suspend fun checkResponseCodeAndFailIfNeeded(item: DownloadItem): DownloadItem {
+        val app = application as ProDownloaderApp
+        var updatedItem = item
+        try {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+
+            val requestBuilder = okhttp3.Request.Builder().url(item.url)
+            if (!item.cookie.isNullOrEmpty()) {
+                requestBuilder.header("Cookie", item.cookie)
+            }
+            if (!item.userAgent.isNullOrEmpty()) {
+                requestBuilder.header("User-Agent", item.userAgent)
+            }
+            requestBuilder.header("Referer", item.url)
+
+            val request = requestBuilder.head().build()
+            var code = 0
+
+            withContext(DispatchContexts.IO) {
+                try {
+                    client.newCall(request).execute().use { response ->
+                        code = response.code
+                    }
+                } catch (e: Exception) {
+                    try {
+                        val getRequest = requestBuilder.get().build()
+                        client.newCall(getRequest).execute().use { response ->
+                            code = response.code
+                        }
+                    } catch (ex: Exception) {
+                        Log.e(TAG, "خطأ أثناء محاولة GET بالفحص بـ DownloadService: ${ex.message}")
+                    }
+                }
+            }
+
+            if (code == 403 || code == 404) {
+                val errorMsg = if (code == 403) {
+                    "فشل التحميل: تم رفض الاتصال بالسيرفر (خطأ 403 - Forbidden)"
+                } else {
+                    "فشل التحميل: الملف غير موجود أو الرابط غير صالح (خطأ 404 - Not Found)"
+                }
+                updatedItem = item.copy(
+                    status = DownloadStatus.FAILED,
+                    errorMessage = errorMsg
+                )
+                app.downloadDao.update(updatedItem)
+                Log.e(TAG, "المتحقق بـ DownloadService كشف عن رمز استجابة غير صالح ($code) للرابط: ${item.url}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل فحص الرابط بـ DownloadService: ${e.message}")
+        }
+        return updatedItem
     }
 
     override fun onDestroy() {

@@ -375,96 +375,115 @@ class DownloadManager(
         val partJobs = mutableListOf<Deferred<Boolean>>()
         val speedTracker = RealTimeSpeedTracker()
 
-        coroutineScope {
-            parts.forEach { part ->
-                val deferred = async(DispatchContexts.IO) {
-                    downloadPartWithRetry(dbItem, part, speedTracker)
+        try {
+            coroutineScope {
+                parts.forEach { part ->
+                    val deferred = async(DispatchContexts.IO) {
+                        downloadPartWithRetry(dbItem, part, speedTracker)
+                    }
+                    partJobs.add(deferred)
                 }
-                partJobs.add(deferred)
-            }
 
-            // مراقب السرعة اللحظي وتحديث الـ Flow وقاعدة البيانات كل ثانية
-            val speedMonitorJob = launch {
-                while (isActive) {
-                    delay(1000)
-                    val speed = speedTracker.getInstantaneousSpeedAndReset()
+                // مراقب السرعة اللحظي وتحديث الـ Flow وقاعدة البيانات كل ثانية
+                val speedMonitorJob = launch {
+                    while (isActive) {
+                        delay(1000)
+                        val speed = speedTracker.getInstantaneousSpeedAndReset()
 
-                    // حساب التقدم الكلي بجمع أحجام ملفات الأجزاء المحملة فعلياً من الكاش
-                    var totalDownloaded: Long = 0
-                    parts.forEach { p ->
-                        val partFile = File(context.cacheDir, "download_${dbItem.id}_part_${p.index}")
-                        if (partFile.exists()) {
-                            totalDownloaded += partFile.length()
+                        // حساب التقدم الكلي بجمع أحجام ملفات الأجزاء المحملة فعلياً من الكاش
+                        var totalDownloaded: Long = 0
+                        parts.forEach { p ->
+                            val partFile = File(context.cacheDir, "download_${dbItem.id}_part_${p.index}")
+                            if (partFile.exists()) {
+                                totalDownloaded += partFile.length()
+                            }
+                        }
+
+                        // إذا انتهى حجم أحد الأجزاء واكتمل فجأة نضبطه
+                        if (totalDownloaded > totalLength && totalLength > 0) {
+                            totalDownloaded = totalLength
+                        }
+
+                        // حساب الـ ETA
+                        val eta = if (speed > 0 && totalLength > 0) {
+                            (totalLength - totalDownloaded) / speed
+                        } else {
+                            -1L
+                        }
+
+                        // تحديث الحالة التفاعلية الذاكرية لقراءتها في الواجهة
+                        val updatedItem = dbItem.copy(
+                            downloadedBytes = totalDownloaded,
+                            status = DownloadStatus.DOWNLOADING
+                        ).apply {
+                            this.speed = speed
+                            this.etaSeconds = eta
+                        }
+
+                        _downloadProgressFlow.value = _downloadProgressFlow.value.toMutableMap().apply {
+                            put(id, updatedItem)
+                        }
+
+                        // تحديث دوري لقاعدة البيانات للتخزين الدائم
+                        downloadDao.update(updatedItem)
+                        DownloadWidgetProvider.updateAllWidgets(context)
+                    }
+                }
+
+                // انتظار انتهاء جميع الأجزاء
+                val results = partJobs.awaitAll()
+                speedMonitorJob.cancel() // إيقاف مراقبة السرعة بعد اكتمال التحميل
+
+                // التحقق من نجاح تحميل كافة الأجزاء
+                if (results.all { it }) {
+                    Log.d(TAG, "تحميل جميع الأجزاء تم بنجاح. بدء الدمج...")
+                    mergeParts(dbItem, finalThreadCount)
+                    val finalDownloadedBytes = if (totalLength > 0) totalLength else {
+                        if (dbItem.filePath.startsWith("content://")) {
+                            try {
+                                val docUri = Uri.parse(dbItem.filePath)
+                                val docFile = DocumentFile.fromSingleUri(context, docUri)
+                                docFile?.length() ?: 0L
+                            } catch (e: Exception) { 0L }
+                        } else {
+                            File(dbItem.filePath).length()
                         }
                     }
-
-                    // إذا انتهى حجم أحد الأجزاء واكتمل فجأة نضبطه
-                    if (totalDownloaded > totalLength && totalLength > 0) {
-                        totalDownloaded = totalLength
-                    }
-
-                    // حساب الـ ETA
-                    val eta = if (speed > 0 && totalLength > 0) {
-                        (totalLength - totalDownloaded) / speed
-                    } else {
-                        -1L
-                    }
-
-                    // تحديث الحالة التفاعلية الذاكرية لقراءتها في الواجهة
-                    val updatedItem = dbItem.copy(
-                        downloadedBytes = totalDownloaded,
-                        status = DownloadStatus.DOWNLOADING
-                    ).apply {
-                        this.speed = speed
-                        this.etaSeconds = eta
-                    }
-
-                    _downloadProgressFlow.value = _downloadProgressFlow.value.toMutableMap().apply {
-                        put(id, updatedItem)
-                    }
-
-                    // تحديث دوري لقاعدة البيانات للتخزين الدائم
-                    downloadDao.update(updatedItem)
-                    DownloadWidgetProvider.updateAllWidgets(context)
-                }
-            }
-
-            // انتظار انتهاء جميع الأجزاء
-            val results = partJobs.awaitAll()
-            speedMonitorJob.cancel() // إيقاف مراقبة السرعة بعد اكتمال التحميل
-
-            // التحقق من نجاح تحميل كافة الأجزاء
-            if (results.all { it }) {
-                Log.d(TAG, "تحميل جميع الأجزاء تم بنجاح. بدء الدمج...")
-                mergeParts(dbItem, finalThreadCount)
-                val finalDownloadedBytes = if (totalLength > 0) totalLength else {
-                    if (dbItem.filePath.startsWith("content://")) {
-                        try {
-                            val docUri = Uri.parse(dbItem.filePath)
-                            val docFile = DocumentFile.fromSingleUri(context, docUri)
-                            docFile?.length() ?: 0L
-                        } catch (e: Exception) { 0L }
-                    } else {
-                        File(dbItem.filePath).length()
-                    }
-                }
-                val completedItem = dbItem.copy(
-                    downloadedBytes = finalDownloadedBytes,
-                    status = DownloadStatus.COMPLETED,
-                    errorMessage = null
-                )
-                updateItemStatus(completedItem)
-                onDownloadCompletedListener?.invoke(completedItem)
-                Log.d(TAG, "اكتمل التنزيل والدمج للملف: ${dbItem.fileName}")
-            } else {
-                Log.e(TAG, "فشلت واحدة أو أكثر من الأجزاء في التحميل.")
-                val errorMsg = if (!isNetworkConnected(context)) {
-                    DownloadError.NoNetwork.toUserMessage()
+                    val completedItem = dbItem.copy(
+                        downloadedBytes = finalDownloadedBytes,
+                        status = DownloadStatus.COMPLETED,
+                        errorMessage = null
+                    )
+                    updateItemStatus(completedItem)
+                    onDownloadCompletedListener?.invoke(completedItem)
+                    Log.d(TAG, "اكتمل التنزيل والدمج للملف: ${dbItem.fileName}")
                 } else {
-                    DownloadError.Timeout.toUserMessage()
+                    Log.e(TAG, "فشلت واحدة أو أكثر من الأجزاء في التحميل.")
+                    val errorMsg = if (!isNetworkConnected(context)) {
+                        DownloadError.NoNetwork.toUserMessage()
+                    } else {
+                        DownloadError.Timeout.toUserMessage()
+                    }
+                    updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
                 }
-                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
             }
+        } catch (e: java.io.FileNotFoundException) {
+            val errorMsg = DownloadError.InvalidLink.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+        } catch (e: java.security.AccessControlException) {
+            val errorMsg = DownloadError.RefusedConnection.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+        } catch (e: java.net.SocketTimeoutException) {
+            val errorMsg = DownloadError.Timeout.toUserMessage()
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+        } catch (e: Exception) {
+            Log.e(TAG, "فشلت عملية التحميل التفرعي: ${e.message}")
+            val errorMsg = if (!isNetworkConnected(context)) {
+                DownloadError.NoNetwork.toUserMessage()
+            } else {
+                DownloadError.Unknown(e.message ?: "فشل التحميل").toUserMessage()
+            }
+            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
         }
     }
 
@@ -488,8 +507,11 @@ class DownloadManager(
                 throw c // إعادة تمرير إلغاء الكوروتين الفوري
             } catch (e: Exception) {
                 Log.e(TAG, "محاولة $attempt لفشل تحميل الجزء ${part.index}: ${e.message}")
+                if (e is java.security.AccessControlException || e is java.io.FileNotFoundException) {
+                    throw e // لا تقم بإعادة المحاولة للأخطاء الثابتة مثل 403 أو 404
+                }
                 if (attempt == 3) {
-                    return false
+                    throw e // أعد رمي الاستثناء عند الفشل النهائي حتى يتسنى التقاطه بدقة
                 }
                 // تأخير تصاعدي (Exponential Backoff): 1ث، 2ث، 4ث
                 val delayMs = (1000 * Math.pow(2.0, (attempt - 1).toDouble())).toLong()
@@ -541,7 +563,11 @@ class DownloadManager(
         okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful && response.code != 206) {
                 Log.e(TAG, "السيرفر أرجع رمز فشل للجزء ${part.index}: ${response.code}")
-                return@withContext false
+                when (response.code) {
+                    404, 410 -> throw java.io.FileNotFoundException("Invalid link (404/410)")
+                    401, 403 -> throw java.security.AccessControlException("Refused connection (401/403)")
+                    else -> throw java.io.IOException("HTTP error code: ${response.code}")
+                }
             }
 
             val body = response.body ?: return@withContext false
