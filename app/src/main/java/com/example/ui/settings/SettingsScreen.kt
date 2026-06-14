@@ -72,30 +72,20 @@ fun SettingsScreen(
 
     // Checking storage permission status in Settings
     var hasStoragePermission by remember {
-        mutableStateOf(
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                Environment.isExternalStorageManager()
-            } else {
-                androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
-            }
-        )
+        mutableStateOf(com.example.data.download.PermissionHandler.hasStoragePermission(context))
     }
 
     val storagePermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasStoragePermission = isGranted
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasStoragePermission = com.example.data.download.PermissionHandler.hasStoragePermission(context)
     }
 
     val settingsLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(settingsLifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                hasStoragePermission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                    Environment.isExternalStorageManager()
-                } else {
-                    androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                }
+                hasStoragePermission = com.example.data.download.PermissionHandler.hasStoragePermission(context)
             }
         }
         settingsLifecycleOwner.lifecycle.addObserver(observer)
@@ -388,22 +378,17 @@ fun SettingsScreen(
                         }
                         Button(
                             onClick = {
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                if (android.os.Build.VERSION.SDK_INT == android.os.Build.VERSION_CODES.R || android.os.Build.VERSION.SDK_INT == android.os.Build.VERSION_CODES.S || android.os.Build.VERSION.SDK_INT == android.os.Build.VERSION_CODES.S_V2) {
                                     try {
                                         val intent = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                                             data = Uri.parse("package:${context.packageName}")
                                         }
                                         context.startActivity(intent)
                                     } catch (e: Exception) {
-                                        try {
-                                            val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                                            context.startActivity(intent)
-                                        } catch (ex: Exception) {
-                                            Toast.makeText(context, "الرجاء البحث عن إدارة كل الملفات في إعدادات النظام وتمكينها يدويًا للمتابع", Toast.LENGTH_LONG).show()
-                                        }
+                                        storagePermissionLauncher.launch(com.example.data.download.PermissionHandler.getRequiredPermissions())
                                     }
                                 } else {
-                                    storagePermissionLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                    storagePermissionLauncher.launch(com.example.data.download.PermissionHandler.getRequiredPermissions())
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(

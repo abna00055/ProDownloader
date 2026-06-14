@@ -93,13 +93,7 @@ fun OnboardingScreen(
     }
 
     var hasStoragePermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Environment.isExternalStorageManager()
-            } else {
-                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-            }
-        )
+        mutableStateOf(com.example.data.download.PermissionHandler.hasStoragePermission(context))
     }
 
     // Auto-update permission states when user returns to onboarding screen (ON_RESUME)
@@ -107,11 +101,7 @@ fun OnboardingScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                hasStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    Environment.isExternalStorageManager()
-                } else {
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-                }
+                hasStoragePermission = com.example.data.download.PermissionHandler.hasStoragePermission(context)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     hasNotifyPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 }
@@ -130,9 +120,9 @@ fun OnboardingScreen(
     }
 
     val storagePermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasStoragePermission = isGranted
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasStoragePermission = com.example.data.download.PermissionHandler.hasStoragePermission(context)
     }
 
     Scaffold(
@@ -270,22 +260,19 @@ fun OnboardingScreen(
                                 isGranted = hasStoragePermission,
                                 required = true,
                                 onGrant = {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.R || Build.VERSION.SDK_INT == Build.VERSION_CODES.S || Build.VERSION.SDK_INT == Build.VERSION_CODES.S_V2) {
+                                        // لأجهزة أندرويد 11 و 12، إعطاء صلاحية الوصول الكامل اختيارياً أو طلب الأذونات القياسية
                                         try {
                                             val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                                                 data = Uri.parse("package:${context.packageName}")
                                             }
                                             context.startActivity(intent)
                                         } catch (e: Exception) {
-                                            try {
-                                                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                                                context.startActivity(intent)
-                                            } catch (ex: Exception) {
-                                                Toast.makeText(context, "الرجاء البحث عن إدارة كل الملفات في إعدادات النظام وتمكينها يدويًا للمتابع", Toast.LENGTH_LONG).show()
-                                            }
+                                            storagePermissionLauncher.launch(com.example.data.download.PermissionHandler.getRequiredPermissions())
                                         }
                                     } else {
-                                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                        // لباقي الإصدارات، استخدم معالج الأذونات الموحد لطلب أذونات الوسائط المتعددة (أندرويد 13+) أو التخزين (أندرويد 9-)
+                                        storagePermissionLauncher.launch(com.example.data.download.PermissionHandler.getRequiredPermissions())
                                     }
                                 }
                             )

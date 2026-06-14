@@ -197,6 +197,17 @@ class DownloadManager(
 
         val job = engineScope.launch {
             try {
+                // 1. التحقق الصريح والإلزامي من أذونات التخزين لتجنب الفقدان أو الفشل
+                if (!PermissionHandler.hasStoragePermission(context)) {
+                    Log.e(TAG, "فشل بدء التحميل للمعرف ${item.id} لعدم توفر صلاحية التخزين!")
+                    val errorMsg = "لا يمكن بدء التحميل بدون إذن الوصول للتخزين"
+                    updateItemStatus(item.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "خطأ: $errorMsg. تم إيقاف التحميل تلقائياً.", Toast.LENGTH_LONG).show()
+                    }
+                    return@launch
+                }
+
                 // Check if wifiOnly setting is enabled
                 val settingsManager = com.example.data.settings.SettingsManager.getInstance(context)
                 val wifiOnly = settingsManager.wifiOnlyFlow.first()
@@ -513,27 +524,91 @@ class DownloadManager(
 
                 // التحقق من نجاح تحميل كافة الأجزاء
                 if (results.all { it }) {
-                    Log.d(TAG, "تحميل جميع الأجزاء تم بنجاح. بدء الدمج...")
-                    mergeParts(dbItem, finalThreadCount)
-                    val finalDownloadedBytes = if (totalLength > 0) totalLength else {
-                        if (dbItem.filePath.startsWith("content://")) {
-                            try {
-                                val docUri = Uri.parse(dbItem.filePath)
-                                val docFile = DocumentFile.fromSingleUri(context, docUri)
-                                docFile?.length() ?: 0L
-                            } catch (e: Exception) { 0L }
-                        } else {
-                            File(dbItem.filePath).length()
+                    Log.d(TAG, "تحميل جميع الأجزاء تم بنجاح. بدء الدمج والتحقق...")
+                    
+                    // 1. دمج جميع الأجزاء المؤقتة إلى ملف كاش مدمج مؤقت
+                    val tempMergedFile = mergeParts(dbItem, finalThreadCount)
+                    val actualLength = tempMergedFile.length()
+                    
+                    // 2. خطوة التحقق الإلزامية الأولى: مطابقة الحجم لـ Content-Length بدون هامش تفاوت
+                    if (totalLength > 0 && actualLength != totalLength) {
+                        Log.e(TAG, "فشل تحقق الحجم: الحجم الفعلي ($actualLength) لا يطابق المرسل من السيرفر ($totalLength)")
+                        if (tempMergedFile.exists()) {
+                            tempMergedFile.delete()
                         }
+                        val errorMsg = "فشل التحقق من سلامة الملف المحفوظ (اختلاف الحجم والبيانات)"
+                        updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                        return@coroutineScope
                     }
+                    
+                    // 3. كتابة وتصدير الملف بشكل دائم للتخزين العام للجهاز عبر MediaStoreHelper
+                    val finalPathOrUri = MediaStoreHelper.saveFileToPublicStorage(
+                        context = context,
+                        tempFile = tempMergedFile,
+                        fileName = dbItem.fileName,
+                        fileType = dbItem.fileType,
+                        mimeType = mimeType
+                    )
+                    
+                    // تنظيف ملف الكاش المدمج المؤقت فور الانتهاء من نقله
+                    if (tempMergedFile.exists()) {
+                        tempMergedFile.delete()
+                    }
+                    
+                    if (finalPathOrUri == null) {
+                        Log.e(TAG, "فشل تصدير الملف لمجلدات النظام الدائمة!")
+                        val errorMsg = "فشل حفظ الملف بالتخزين الدائم للجهاز"
+                        updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                        return@coroutineScope
+                    }
+                    
+                    // 4. خطوة التحقق الإلزامية الثانية: التحقق من وجود الملف في مجلدات النظام وقابلية قراءته بنجاح
+                    val isPathValidAndReadable = if (finalPathOrUri.startsWith("content://")) {
+                        try {
+                            val targetUri = Uri.parse(finalPathOrUri)
+                            context.contentResolver.openAssetFileDescriptor(targetUri, "r")?.use { afd ->
+                                afd.length == actualLength
+                            } ?: false
+                        } catch (e: Exception) {
+                            Log.e(TAG, "فشل التحقق من معرف Uri الدائم: ${e.message}")
+                            false
+                        }
+                    } else {
+                        val localFile = File(finalPathOrUri)
+                        localFile.exists() && localFile.length() == actualLength
+                    }
+                    
+                    if (!isPathValidAndReadable) {
+                        Log.e(TAG, "فشل التحقق من سلامة وجاهزية الملف النهائي المتواجد بالتخزين الدائم!")
+                        val errorMsg = "فشل التحقق من سلامة الملف المحفوظ (غير قابل للوصول بعد الحفظ)"
+                        updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                        return@coroutineScope
+                    }
+                    
+                    // 5. تحديث السجل إلى مكتمل مع تخزين مسار التخزين الدائم
                     val completedItem = dbItem.copy(
-                        downloadedBytes = finalDownloadedBytes,
+                        filePath = finalPathOrUri,
+                        downloadedBytes = actualLength,
                         status = DownloadStatus.COMPLETED,
                         errorMessage = null
                     )
                     updateItemStatus(completedItem)
                     onDownloadCompletedListener?.invoke(completedItem)
-                    Log.d(TAG, "اكتمل التنزيل والدمج للملف: ${dbItem.fileName}")
+                    Log.d(TAG, "اكتمل التنزيل وتصدير الملف والتأكد بنجاح لـ: ${dbItem.fileName}")
+                    
+                    // 6. تقديم سجل تأكيدي Toast للمستخدم يوضح مسار الحفظ النهائي
+                    withContext(Dispatchers.Main) {
+                        val displayPath = if (finalPathOrUri.startsWith("content://")) {
+                            when (dbItem.fileType) {
+                                FileType.VIDEO -> "معرض مقاطع الفيديو (Movies/ProDownloader)"
+                                FileType.AUDIO -> "مكتبة الموسيقى والصوتيات (Music/ProDownloader)"
+                                else -> "مجلد التنزيلات العام (Download/ProDownloader)"
+                            }
+                        } else {
+                            finalPathOrUri
+                        }
+                        Toast.makeText(context, "تم الحفظ بنجاح في:\n$displayPath", Toast.LENGTH_LONG).show()
+                    }
                 } else {
                     Log.e(TAG, "فشلت واحدة أو أكثر من الأجزاء في التحميل.")
                     val errorMsg = if (!isNetworkConnected(context)) {
@@ -682,47 +757,27 @@ class DownloadManager(
     }
 
     /**
-     * دمج أجزاء الملف المؤقتة في الملف النهائي
+     * دمج أجزاء الملف المؤقتة في ملف مؤقت موحد ومكتمل داخل مجلد الكاش
      */
-    private suspend fun mergeParts(dbItem: DownloadItem, threadCount: Int) = withContext(DispatchContexts.IO) {
-        val isSaf = dbItem.filePath.startsWith("content://")
-        if (isSaf) {
-            try {
-                val docUri = Uri.parse(dbItem.filePath)
-                context.contentResolver.openOutputStream(docUri, "rwt")?.use { output ->
-                    for (i in 0 until threadCount) {
-                        val partFile = File(context.cacheDir, "download_${dbItem.id}_part_$i")
-                        if (partFile.exists()) {
-                            partFile.inputStream().use { input ->
-                                input.copyTo(output)
-                            }
-                            partFile.delete() // حذف جزء الملف المؤقت بعد دمجه بنجاح
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "فشل دمج الأجزاء لملف SAF: ${e.message}", e)
-                throw e
-            }
-        } else {
-            val destFile = File(dbItem.filePath)
-            if (destFile.exists()) {
-                destFile.delete()
-            }
+    private suspend fun mergeParts(dbItem: DownloadItem, threadCount: Int): File = withContext(DispatchContexts.IO) {
+        val tempMergedFile = File(context.cacheDir, "download_${dbItem.id}_merged_temp")
+        if (tempMergedFile.exists()) {
+            tempMergedFile.delete()
+        }
 
-            FileOutputStream(destFile).use { output ->
-                for (i in 0 until threadCount) {
-                    val partFile = File(context.cacheDir, "download_${dbItem.id}_part_$i")
-                    if (partFile.exists()) {
-                        partFile.inputStream().use { input ->
-                            input.copyTo(output)
-                        }
-                        partFile.delete() // حذف جزء الملف المؤقت بعد دمجه بنجاح
+        FileOutputStream(tempMergedFile).use { output ->
+            for (i in 0 until threadCount) {
+                val partFile = File(context.cacheDir, "download_${dbItem.id}_part_$i")
+                if (partFile.exists()) {
+                    partFile.inputStream().use { input ->
+                        input.copyTo(output)
                     }
+                    partFile.delete() // حذف جزء الملف المؤقت بعد دمجه بنجاح
                 }
             }
         }
-        Log.d(TAG, "تم دمج الملف بنجاح وحذف ملفات الأجزاء المؤقتة.")
+        Log.d(TAG, "تم دمج ملف الأجزاء المؤقتة بنجاح إلى: ${tempMergedFile.absolutePath}")
+        tempMergedFile
     }
 
     /**
