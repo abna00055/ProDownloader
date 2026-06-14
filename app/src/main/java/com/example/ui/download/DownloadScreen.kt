@@ -1323,7 +1323,7 @@ fun DownloadItemCardInteractive(
                                             .padding(end = 8.dp),
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
-                                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFF59E0B))
+                                        Icon(Icons.Default.Pause, contentDescription = "إيقاف مؤقت", modifier = Modifier.size(16.dp), tint = Color(0xFFF59E0B))
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("إيقاف مؤقت", fontSize = 12.sp, color = Color(0xFFF59E0B))
                                     }
@@ -1332,8 +1332,10 @@ fun DownloadItemCardInteractive(
                                         onClick = onCancel,
                                         modifier = Modifier.height(40.dp),
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.outline)
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer)
                                     ) {
+                                        Icon(Icons.Default.Close, contentDescription = "إلغاء التحميل", modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Text("إلغاء", fontSize = 12.sp)
                                     }
                                 }

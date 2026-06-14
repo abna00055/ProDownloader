@@ -326,7 +326,13 @@ fun BrowserScreen(
                                     } catch (e: Exception) {
                                         null
                                     }
-                                    val userAgent = view?.settings?.userAgentString
+                                    val userAgent = try {
+                                        request?.requestHeaders?.entries
+                                            ?.find { it.key.equals("user-agent", ignoreCase = true) }
+                                            ?.value
+                                    } catch (e: Exception) {
+                                        null
+                                    }
                                     sniffUrl(reqUrl, sniffedUrlsState, scope, cookie, userAgent)
                                 }
                                 return super.shouldInterceptRequest(view, request)
