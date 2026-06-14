@@ -70,6 +70,40 @@ fun SettingsScreen(
         }
     }
 
+    // Checking storage permission status in Settings
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+
+    val storagePermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasStoragePermission = isGranted
+    }
+
+    val settingsLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(settingsLifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasStoragePermission = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    Environment.isExternalStorageManager()
+                } else {
+                    androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                }
+            }
+        }
+        settingsLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            settingsLifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     // قراءة الحالات اللحظية من DataStore
     val threadCount by settingsManager.threadCountFlow.collectAsState(initial = 4)
     val maxConcurrentDownloads by settingsManager.maxConcurrentDownloadsFlow.collectAsState(initial = 3)
@@ -328,6 +362,59 @@ fun SettingsScreen(
                                 tint = Color(accentColorHex),
                                 modifier = Modifier.size(18.dp)
                             )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+
+                    // حالة وتحكم صلاحيات الوصول للتخزين
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("صلاحية الوصول الكامل للذاكرة", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (hasStoragePermission) 
+                                    "الحالة: تم منح الصلاحية بنجاح ✅" 
+                                else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) 
+                                    "مطلوبة للتنزيل المباشر بالقرص على أندرويد 11+ ⚠️" 
+                                else 
+                                    "مطلوبة لكتابة وحفظ الملفات بالذاكرة ⚠️", 
+                                fontSize = 10.sp, 
+                                color = if (hasStoragePermission) Color(0xFF10B981) else Color(0xFFEF4444)
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                                    try {
+                                        val intent = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                            data = Uri.parse("package:${context.packageName}")
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        try {
+                                            val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                                            context.startActivity(intent)
+                                        } catch (ex: Exception) {
+                                            Toast.makeText(context, "الرجاء البحث عن إدارة كل الملفات في إعدادات النظام وتمكينها يدويًا للمتابع", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                } else {
+                                    storagePermissionLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (hasStoragePermission) Color(0xFF10B981).copy(alpha = 0.15f) else Color(0xFFEF4444),
+                                contentColor = if (hasStoragePermission) Color(0xFF10B981) else Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.height(35.dp)
+                        ) {
+                            Text(if (hasStoragePermission) "مفعّلة" else "منح الإذن", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 

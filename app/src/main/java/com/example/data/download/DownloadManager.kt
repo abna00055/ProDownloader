@@ -75,6 +75,10 @@ class DownloadManager(
     // وظائف العمل الفعالة لكل معرّف تنزيل (ID -> Coroutine Job)
     private val activeJobs = ConcurrentHashMap<Long, Job>()
 
+    // قفل مزامنة لقائمة الانتظار (Thread-Safe Queueing synchronized lock)
+    private val queueLock = Any()
+    private val queuedTasksQueue = LinkedHashSet<Long>()
+
     /**
      * تخمين اسم ملف تقريبي من الرابط للتسهيل على المستخدم في التخزين الموضعي
      */
@@ -153,14 +157,43 @@ class DownloadManager(
     }
 
     /**
-     * بدء عملية التنزيل
+     * بدء عملية التنزيل مع دعم الطوابير والجدولة المركزية
      */
     fun startDownload(item: DownloadItem) {
-        // تجنب تكرار التنزيل إذا كان فعالاً بالفعل
+        // تجنب تكرار التنزيل إذا كان فعالاً بالفعل في المهام النشطة أو في قائمة الانتظار
         if (activeJobs.containsKey(item.id)) {
             Log.d(TAG, "التنزيل ${item.id} قيد العمل بالفعل.")
             return
         }
+
+        engineScope.launch {
+            val settingsManager = com.example.data.settings.SettingsManager.getInstance(context)
+            val maxConcurrent = settingsManager.maxConcurrentDownloadsFlow.first()
+
+            val shouldQueue = synchronized(queueLock) {
+                if (activeJobs.size >= maxConcurrent) {
+                    queuedTasksQueue.add(item.id)
+                    true
+                } else {
+                    queuedTasksQueue.remove(item.id)
+                    false
+                }
+            }
+
+            if (shouldQueue) {
+                Log.d(TAG, "تمت إضافة التنزيل ${item.id} إلى قائمة الانتظار (جدولة مركزية). الحجم النشط: ${activeJobs.size}, الأقصى: $maxConcurrent")
+                updateItemStatus(item.copy(status = DownloadStatus.QUEUED))
+            } else {
+                runDownloadTask(item)
+            }
+        }
+    }
+
+    /**
+     * إطلاق مهمة التنزيل الفعلي بعد التحقق من السعة والاتصال
+     */
+    private fun runDownloadTask(item: DownloadItem) {
+        if (activeJobs.containsKey(item.id)) return
 
         val job = engineScope.launch {
             try {
@@ -190,6 +223,8 @@ class DownloadManager(
             } finally {
                 activeJobs.remove(item.id)
                 removeFromProgressFlow(item.id)
+                // جدولة وتشغيل العنصر التالي من قائمة الانتظار تلقائياً
+                checkAndRunNext()
             }
         }
 
@@ -197,19 +232,55 @@ class DownloadManager(
     }
 
     /**
+     * التحقق من توفر مساحة وجدولة العنصر التالي في قائمة الانتظار
+     */
+    private fun checkAndRunNext() {
+        engineScope.launch {
+            val settingsManager = com.example.data.settings.SettingsManager.getInstance(context)
+            val maxConcurrent = settingsManager.maxConcurrentDownloadsFlow.first()
+
+            val nextIdToStart = synchronized(queueLock) {
+                if (activeJobs.size < maxConcurrent && queuedTasksQueue.isNotEmpty()) {
+                    val firstId = queuedTasksQueue.first()
+                    queuedTasksQueue.remove(firstId)
+                    firstId
+                } else {
+                    null
+                }
+            }
+
+            if (nextIdToStart != null) {
+                val dbItem = downloadDao.getDownloadById(nextIdToStart)
+                if (dbItem != null) {
+                    Log.d(TAG, "جدولة وتشغيل المهمة التالية من قائمة الانتظار: ID $nextIdToStart")
+                    runDownloadTask(dbItem)
+                } else {
+                    // إذا كان العنصر المحذوف من قائمة قاعدة البيانات، استمر بالبحث عن التالي
+                    checkAndRunNext()
+                }
+            }
+        }
+    }
+
+    /**
      * إيقاف التنزيل مؤقتاً
      */
     fun pauseDownload(id: Long) {
+        synchronized(queueLock) {
+            queuedTasksQueue.remove(id)
+        }
         activeJobs[id]?.cancel()
         activeJobs.remove(id)
         removeFromProgressFlow(id)
 
         engineScope.launch {
             val dbItem = downloadDao.getDownloadById(id)
-            if (dbItem != null && dbItem.status == DownloadStatus.DOWNLOADING) {
+            if (dbItem != null && (dbItem.status == DownloadStatus.DOWNLOADING || dbItem.status == DownloadStatus.QUEUED)) {
                 updateItemStatus(dbItem.copy(status = DownloadStatus.PAUSED))
                 Log.d(TAG, "تم بنجاح إيقاف التحميل ID: $id مؤقتاً.")
             }
+            // تشغيل المهمة التالية في حال زيادة السعة المتوفرة
+            checkAndRunNext()
         }
     }
 
@@ -217,6 +288,9 @@ class DownloadManager(
      * إلغاء التنزيل نهائياً وحذف الملفات المؤقتة
      */
     fun cancelDownload(id: Long) {
+        synchronized(queueLock) {
+            queuedTasksQueue.remove(id)
+        }
         activeJobs[id]?.cancel()
         activeJobs.remove(id)
         removeFromProgressFlow(id)
@@ -251,6 +325,8 @@ class DownloadManager(
                 }
                 Log.d(TAG, "تم إلغاء التنزيل وحذف الأجزاء والمستندات لـ ID: $id")
             }
+            // تشغيل المهمة التالية في حال زيادة السعة المتوفرة
+            checkAndRunNext()
         }
     }
 
@@ -261,6 +337,7 @@ class DownloadManager(
         cancelDownload(item.id)
         engineScope.launch {
             downloadDao.delete(item)
+            checkAndRunNext()
         }
     }
 
