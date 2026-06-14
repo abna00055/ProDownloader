@@ -54,12 +54,22 @@ class DownloadViewModel(
     private val _prefilledUrlFlow = MutableStateFlow<String?>(null)
     val prefilledUrlFlow = _prefilledUrlFlow.asStateFlow()
 
-    fun triggerPrefilledUrl(url: String) {
+    private val _prefilledCookieFlow = MutableStateFlow<String?>(null)
+    val prefilledCookieFlow = _prefilledCookieFlow.asStateFlow()
+
+    private val _prefilledUserAgentFlow = MutableStateFlow<String?>(null)
+    val prefilledUserAgentFlow = _prefilledUserAgentFlow.asStateFlow()
+
+    fun triggerPrefilledUrl(url: String, cookie: String? = null, userAgent: String? = null) {
         _prefilledUrlFlow.value = url
+        _prefilledCookieFlow.value = cookie
+        _prefilledUserAgentFlow.value = userAgent
     }
 
     fun clearPrefilledUrl() {
         _prefilledUrlFlow.value = null
+        _prefilledCookieFlow.value = null
+        _prefilledUserAgentFlow.value = null
     }
 
     fun clearError() {
@@ -75,7 +85,9 @@ class DownloadViewModel(
         folderPath: String, 
         threadCount: Int, 
         fileType: FileType,
-        fileSize: Long = 0L
+        fileSize: Long = 0L,
+        cookie: String? = null,
+        userAgent: String? = null
     ) {
         if (url.isEmpty() || !url.startsWith("http")) {
             _errorMessage.value = "الرجاء إدخال رابط تحميل صحيح يبدأ بـ http أو https."
@@ -114,7 +126,9 @@ class DownloadViewModel(
                     fileType = fileType,
                     createdAt = System.currentTimeMillis(),
                     mimeType = "application/octet-stream",
-                    threadCount = threadCount
+                    threadCount = threadCount,
+                    cookie = cookie,
+                    userAgent = userAgent
                 )
 
                 val newId = downloadDao.insert(newDownload)
@@ -206,7 +220,7 @@ class DownloadViewModel(
     /**
      * وظيفة إضافة وإدراج تنزيل جديد
      */
-    fun addDownload(url: String, threadCount: Int) {
+    fun addDownload(url: String, threadCount: Int, cookie: String? = null, userAgent: String? = null) {
         if (url.isEmpty() || !url.startsWith("http")) {
             _errorMessage.value = "الرجاء إدخال رابط تحميل صحيح يبدأ بـ http أو https."
             return
@@ -253,7 +267,9 @@ class DownloadViewModel(
                     fileType = guessedFileType,
                     createdAt = System.currentTimeMillis(),
                     mimeType = "application/octet-stream",
-                    threadCount = threadCount
+                    threadCount = threadCount,
+                    cookie = cookie,
+                    userAgent = userAgent
                 )
 
                 // إدراج السجل في قاعدة البيانات فوراً للحصول على المعرّف (ID)

@@ -108,16 +108,23 @@ class DownloadManager(
     /**
      * استخراج اسم الملف من الرابط أو الهيدرز
      */
-    suspend fun resolveFileInfo(url: String): Pair<String, FileType> = withContext(DispatchContexts.IO) {
+    suspend fun resolveFileInfo(url: String, cookie: String? = null, userAgent: String? = null): Pair<String, FileType> = withContext(DispatchContexts.IO) {
         var fileName = "downloaded_file"
         var mimeType = ""
 
         try {
             // نقوم بإرسال طلب HEAD للحصول على معلومات الملف دون تحميل محتواه
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url(url)
-                .head()
-                .build()
+            if (!cookie.isNullOrEmpty()) {
+                requestBuilder.header("Cookie", cookie)
+            }
+            if (!userAgent.isNullOrEmpty()) {
+                requestBuilder.header("User-Agent", userAgent)
+            }
+            requestBuilder.header("Referer", url)
+            
+            val request = requestBuilder.head().build()
 
             executeWithRetry {
                 okHttpClient.newCall(request).execute().use { response ->
@@ -271,7 +278,15 @@ class DownloadManager(
         }
 
         // 1. فحص معلومات الاتصال والحصول على الحجم الكلي ودعم Range
-        val checkRequest = Request.Builder().url(dbItem.url).head().build()
+        val checkRequestBuilder = Request.Builder().url(dbItem.url)
+        if (!dbItem.cookie.isNullOrEmpty()) {
+            checkRequestBuilder.addHeader("Cookie", dbItem.cookie)
+        }
+        if (!dbItem.userAgent.isNullOrEmpty()) {
+            checkRequestBuilder.addHeader("User-Agent", dbItem.userAgent)
+        }
+        checkRequestBuilder.addHeader("Referer", dbItem.url)
+        val checkRequest = checkRequestBuilder.head().build()
         var totalLength = dbItem.fileSize
         var supportsRange = false
         var mimeType = dbItem.mimeType
@@ -505,6 +520,14 @@ class DownloadManager(
 
         // بناء طلب النطاق في حال دعمه، والاستئناف من آخر بايت محمل للجوزء
         val requestBuilder = Request.Builder().url(dbItem.url)
+        if (!dbItem.cookie.isNullOrEmpty()) {
+            requestBuilder.addHeader("Cookie", dbItem.cookie)
+        }
+        if (!dbItem.userAgent.isNullOrEmpty()) {
+            requestBuilder.addHeader("User-Agent", dbItem.userAgent)
+        }
+        requestBuilder.addHeader("Referer", dbItem.url)
+
         if (dbItem.fileSize > 0 && part.endOffset >= 0) {
             val rangeStart = part.startOffset + currentBytes
             val rangeEnd = part.endOffset

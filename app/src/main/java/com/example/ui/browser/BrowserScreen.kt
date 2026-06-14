@@ -304,7 +304,13 @@ fun BrowserScreen(
                                 super.onLoadResource(view, url)
                                 // فحص الرابط المباشر للمورد بشكل فوري
                                 if (url != null) {
-                                    sniffUrl(url, sniffedUrlsState, scope)
+                                    val cookie = try {
+                                        android.webkit.CookieManager.getInstance().getCookie(url)
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                    val userAgent = view?.settings?.userAgentString
+                                    sniffUrl(url, sniffedUrlsState, scope, cookie, userAgent)
                                 }
                             }
 
@@ -315,7 +321,13 @@ fun BrowserScreen(
                             ): WebResourceResponse? {
                                 val reqUrl = request?.url?.toString()
                                 if (reqUrl != null) {
-                                    sniffUrl(reqUrl, sniffedUrlsState, scope)
+                                    val cookie = try {
+                                        android.webkit.CookieManager.getInstance().getCookie(reqUrl)
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                    val userAgent = view?.settings?.userAgentString
+                                    sniffUrl(reqUrl, sniffedUrlsState, scope, cookie, userAgent)
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
@@ -420,7 +432,7 @@ fun BrowserScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            downloadViewModel.triggerPrefilledUrl(option.url)
+                                            downloadViewModel.triggerPrefilledUrl(option.url, selectedM3u8Media?.cookie, selectedM3u8Media?.userAgent)
                                             showSnifferSheet = false
                                             Toast.makeText(context, "تم تحديد الجودة المتفرعة: ${option.label}", Toast.LENGTH_SHORT).show()
                                         }
@@ -590,7 +602,7 @@ fun BrowserScreen(
                                                     }
                                                 }
                                             } else {
-                                                downloadViewModel.triggerPrefilledUrl(item.url)
+                                                downloadViewModel.triggerPrefilledUrl(item.url, item.cookie, item.userAgent)
                                                 showSnifferSheet = false
                                                 Toast.makeText(context, "تم تجهيز الملف للإدراج بقنوات تحميل تفرعية متعددة", Toast.LENGTH_SHORT).show()
                                             }
@@ -641,13 +653,21 @@ data class SniffedMedia(
     val name: String,
     val url: String,
     val mimeType: String,
+    val cookie: String? = null,
+    val userAgent: String? = null,
     val discoveredAt: Long = System.currentTimeMillis()
 )
 
 /**
  * فحص الرابط واعتراض وتجسس للحصل على الفيديوهات المخفية أو المباشرة بالتفصيل
  */
-fun sniffUrl(url: String, sniffedList: MutableList<SniffedMedia>, scope: CoroutineScope) {
+fun sniffUrl(
+    url: String,
+    sniffedList: MutableList<SniffedMedia>,
+    scope: CoroutineScope,
+    cookie: String? = null,
+    userAgent: String? = null
+) {
     val cleanUrl = url.lowercase().trim()
 
     // فلاتر ذكية للتخلص من الإعلانات والإشارات الوهمية والروابط غير المفيدة
@@ -685,7 +705,9 @@ fun sniffUrl(url: String, sniffedList: MutableList<SniffedMedia>, scope: Corouti
             val media = SniffedMedia(
                 name = guessedName,
                 url = url,
-                mimeType = "فيديو / بث شبكي مباشر"
+                mimeType = "فيديو / بث شبكي مباشر",
+                cookie = cookie,
+                userAgent = userAgent
             )
             scope.launch(Dispatchers.Main) {
                 val currentUrls = sniffedList.map { it.url }.toSet()
@@ -719,7 +741,9 @@ fun sniffUrl(url: String, sniffedList: MutableList<SniffedMedia>, scope: Corouti
                                         SniffedMedia(
                                             name = guessedName,
                                             url = url,
-                                            mimeType = contentType
+                                            mimeType = contentType,
+                                            cookie = cookie,
+                                            userAgent = userAgent
                                         )
                                     )
                                 }

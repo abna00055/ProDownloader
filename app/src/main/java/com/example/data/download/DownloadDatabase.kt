@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 /**
  * قاعدة بيانات التطبيق لتخزين سجل وتفاصيل التحميلات.
  */
-@Database(entities = [DownloadItem::class], version = 2, exportSchema = false)
+@Database(entities = [DownloadItem::class], version = 3, exportSchema = false)
 @TypeConverters(DownloadConverters::class)
 abstract class DownloadDatabase : RoomDatabase() {
 

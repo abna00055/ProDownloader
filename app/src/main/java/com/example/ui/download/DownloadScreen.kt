@@ -578,6 +578,8 @@ fun AddDownloadSheet(
 
     var isFolderDropdownExpanded by remember { mutableStateOf(false) }
     val isResolving by viewModel.isResolving.collectAsStateWithLifecycle()
+    val prefilledCookie by viewModel.prefilledCookieFlow.collectAsStateWithLifecycle()
+    val prefilledUserAgent by viewModel.prefilledUserAgentFlow.collectAsStateWithLifecycle()
     var isResolvingYoutubeDL by remember { mutableStateOf(false) }
     var sheetError by remember { mutableStateOf<String?>(null) }
     var isLinkResolvedSuccessfully by remember { mutableStateOf(false) }
@@ -968,7 +970,9 @@ fun AddDownloadSheet(
                             folderPath = selectedFolderPath,
                             threadCount = selectedThreads.toInt(),
                             fileType = detectedType,
-                            fileSize = fileSizeToDisplay
+                            fileSize = fileSizeToDisplay,
+                            cookie = prefilledCookie,
+                            userAgent = prefilledUserAgent
                         )
                         onDismiss()
                     }
@@ -997,7 +1001,9 @@ fun AddDownloadSheet(
                                     folderPath = selectedFolderPath,
                                     threadCount = selectedThreads.toInt(),
                                     fileType = detectedType,
-                                    fileSize = fileSizeToDisplay
+                                    fileSize = fileSizeToDisplay,
+                                    cookie = prefilledCookie,
+                                    userAgent = prefilledUserAgent
                                 )
                                 onDismiss()
                             }
