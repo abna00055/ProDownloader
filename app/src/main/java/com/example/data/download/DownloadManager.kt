@@ -75,9 +75,43 @@ class DownloadManager(
     // وظائف العمل الفعالة لكل معرّف تنزيل (ID -> Coroutine Job)
     private val activeJobs = ConcurrentHashMap<Long, Job>()
 
+    // تتبع عدد محاولات إعادة التشغيل التلقائي بعد حدوث خطأ مؤقت للاتصال بالشبكة (ID -> Current Try Count)
+    private val autoRetriesCount = ConcurrentHashMap<Long, Int>()
+
     // قفل مزامنة لقائمة الانتظار (Thread-Safe Queueing synchronized lock)
     private val queueLock = Any()
     private val queuedTasksQueue = LinkedHashSet<Long>()
+
+    /**
+     * محاولة معالجة إعادة التحميل التلقائي للأخطاء الشبكية المؤقتة وغير المانعة قطعياً للتحميل.
+     */
+    private fun tryAutoResume(id: Long, dbItem: DownloadItem, errorMessage: String): Boolean {
+        // نتحقق من نوع الخطأ: إذا كان خطأ دائماً مثل 403 أو 404 أو نقص المساحة فلا داعي للتكرار
+        if (errorMessage.contains("إذن") || errorMessage.contains("404") || errorMessage.contains("403") || errorMessage.contains("المساحة المتاحة")) {
+            autoRetriesCount.remove(id)
+            return false
+        }
+
+        val currentRetries = autoRetriesCount.getOrDefault(id, 0)
+        if (currentRetries < 3) {
+            autoRetriesCount[id] = currentRetries + 1
+            Log.d(TAG, "سيتم إعادة محاولة استئناف التنزيل للمعرف $id تلقائياً خلال 6 ثوانٍ. المحاولة: ${currentRetries + 1}/3")
+            
+            engineScope.launch {
+                // نضع حالة التنزيل في طابور الانتظار مع توضيح المحاولة التلقائية الجارية للمستخدم
+                updateItemStatus(dbItem.copy(
+                    status = DownloadStatus.QUEUED,
+                    errorMessage = "فشل في اتصال الشبكة. جاري تفعيل الاستئناف التلقائي... (محاولة ${currentRetries + 1}/3)"
+                ))
+                delay(6000)
+                DownloadService.startService(context, DownloadService.ACTION_RESUME, id)
+            }
+            return true
+        } else {
+            autoRetriesCount.remove(id)
+            return false
+        }
+    }
 
     /**
      * تخمين اسم ملف تقريبي من الرابط للتسهيل على المستخدم في التخزين الموضعي
@@ -277,6 +311,7 @@ class DownloadManager(
      * إيقاف التنزيل مؤقتاً
      */
     fun pauseDownload(id: Long) {
+        autoRetriesCount.remove(id)
         synchronized(queueLock) {
             queuedTasksQueue.remove(id)
         }
@@ -299,6 +334,7 @@ class DownloadManager(
      * إلغاء التنزيل نهائياً وحذف الملفات المؤقتة
      */
     fun cancelDownload(id: Long) {
+        autoRetriesCount.remove(id)
         synchronized(queueLock) {
             queuedTasksQueue.remove(id)
         }
@@ -361,7 +397,9 @@ class DownloadManager(
         // 0. التحقق من اتصال الإنترنت العام
         if (!isNetworkConnected(context)) {
             val errorMsg = DownloadError.NoNetwork.toUserMessage()
-            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            if (!tryAutoResume(id, dbItem, errorMsg)) {
+                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            }
             return@withContext
         }
 
@@ -616,7 +654,9 @@ class DownloadManager(
                     } else {
                         DownloadError.Timeout.toUserMessage()
                     }
-                    updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                    if (!tryAutoResume(id, dbItem, errorMsg)) {
+                        updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+                    }
                 }
             }
         } catch (e: java.io.FileNotFoundException) {
@@ -627,7 +667,9 @@ class DownloadManager(
             updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
         } catch (e: java.net.SocketTimeoutException) {
             val errorMsg = DownloadError.Timeout.toUserMessage()
-            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            if (!tryAutoResume(id, dbItem, errorMsg)) {
+                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            }
         } catch (e: Exception) {
             Log.e(TAG, "فشلت عملية التحميل التفرعي: ${e.message}")
             val errorMsg = if (!isNetworkConnected(context)) {
@@ -635,7 +677,9 @@ class DownloadManager(
             } else {
                 DownloadError.Unknown(e.message ?: "فشل التحميل").toUserMessage()
             }
-            updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            if (!tryAutoResume(id, dbItem, errorMsg)) {
+                updateItemStatus(dbItem.copy(status = DownloadStatus.FAILED, errorMessage = errorMsg))
+            }
         }
     }
 

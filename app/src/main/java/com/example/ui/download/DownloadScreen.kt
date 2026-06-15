@@ -781,73 +781,131 @@ fun AddDownloadSheet(
                 exit = shrinkVertically() + fadeOut()
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    // عرض الجودات المستخرجة من YoutubeDL
+                    // عرض الجودات المستخرجة من YoutubeDL بقائمة منسدلة أنيقة
                     if (videoInfo != null) {
+                        var isFormatDropdownExpanded by remember { mutableStateOf(false) }
+
                         Text(
-                            text = "الجودات وتنسيقات الفيديو المتاحة بالمنصة:",
+                            text = "الجودة وتنسيق الفيديو المفضل للتحميل:",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            videoInfo?.formats?.forEach { format ->
-                                val isSelected = selectedFormat?.formatId == format.formatId
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
+
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isFormatDropdownExpanded = true },
+                                shape = RoundedCornerShape(12.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = 1.5.dp,
+                                    color = Color(0xFF8B5CF6)
+                                ),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .background(Color(0xFF8B5CF6).copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8B5CF6),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = selectedFormat?.formatName ?: "اختر دقة وجودة التحميل",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            text = selectedFormat?.let { "الامتداد: ${it.ext} • الحجم المتوقع: ${formatBytes(it.fileSize)}" } ?: "جاري تهيئة الجودات...",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "عرض الخيارات المنسدلة",
+                                        tint = MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = isFormatDropdownExpanded,
+                                onDismissRequest = { isFormatDropdownExpanded = false },
+                                modifier = Modifier
+                                    .fillMaxWidth(0.9f)
+                                    .background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                videoInfo?.formats?.forEach { format ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                RadioButton(
+                                                    selected = selectedFormat?.formatId == format.formatId,
+                                                    onClick = {
+                                                        selectedFormat = format
+                                                        fileSizeToDisplay = format.fileSize
+                                                        detectedType = if (format.formatId == "audio_only") FileType.AUDIO else FileType.VIDEO
+                                                        isFormatDropdownExpanded = false
+                                                    },
+                                                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF8B5CF6))
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = format.formatName,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = "الامتداد: ${format.ext} • الحجم: ${formatBytes(format.fileSize)}",
+                                                        fontSize = 11.sp,
+                                                        color = MaterialTheme.colorScheme.outline
+                                                    )
+                                                }
+                                                if (format.isMergeRequired) {
+                                                    Surface(
+                                                        color = Color(0xFF10B981).copy(alpha = 0.15f),
+                                                        shape = RoundedCornerShape(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "دمج تلقائي",
+                                                            color = Color(0xFF10B981),
+                                                            fontSize = 8.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onClick = {
                                             selectedFormat = format
                                             fileSizeToDisplay = format.fileSize
                                             detectedType = if (format.formatId == "audio_only") FileType.AUDIO else FileType.VIDEO
-                                        },
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        width = 1.5.dp,
-                                        color = if (isSelected) Color(0xFF8B5CF6) else MaterialTheme.colorScheme.outlineVariant
-                                    ),
-                                    color = if (isSelected) Color(0xFF8B5CF6).copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        RadioButton(
-                                            selected = isSelected,
-                                            onClick = {
-                                                selectedFormat = format
-                                                fileSizeToDisplay = format.fileSize
-                                                detectedType = if (format.formatId == "audio_only") FileType.AUDIO else FileType.VIDEO
-                                            },
-                                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF8B5CF6))
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = format.formatName,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp
-                                            )
-                                            Text(
-                                                text = "الامتداد: ${format.ext} | الحجم المتوقع: ${formatBytes(format.fileSize)}",
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.outline
-                                            )
+                                            isFormatDropdownExpanded = false
                                         }
-                                        if (format.isMergeRequired) {
-                                            Surface(
-                                                color = Color(0xFF10B981).copy(alpha = 0.15f),
-                                                shape = RoundedCornerShape(6.dp)
-                                            ) {
-                                                Text(
-                                                    text = "دمج FFmpeg تلقائي",
-                                                    color = Color(0xFF10B981),
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                    }
+                                    )
                                 }
                             }
                         }
