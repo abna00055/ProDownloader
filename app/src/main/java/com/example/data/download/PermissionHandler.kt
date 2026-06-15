@@ -20,34 +20,24 @@ object PermissionHandler {
      * التحقق الشامل والدقيق مما إذا كان التطبيق يمتلك الإذن الكافي للكتابة والقراءة.
      */
     fun hasStoragePermission(context: Context): Boolean {
-        return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                val videoGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.READ_MEDIA_VIDEO
-                ) == PackageManager.PERMISSION_GRANTED
-
-                val audioGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.READ_MEDIA_AUDIO
-                ) == PackageManager.PERMISSION_GRANTED
-
-                videoGranted && audioGranted
-            }
-            else -> {
-                val writeGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-
-                val readGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.READ_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-
-                writeGranted && readGranted
-            }
+        // on Android 10+ (Q / API 29) and above, Scoped Storage is supported.
+        // Files are downloaded and merged in cache, and the resulting file is saved to public collections 
+        // using MediaStore API which completely bypasses the need for storage permissions.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return true
         }
+
+        val writeGranted = ContextCompat.checkSelfPermission(
+            context, 
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val readGranted = ContextCompat.checkSelfPermission(
+            context, 
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        return writeGranted && readGranted
     }
 
     /**

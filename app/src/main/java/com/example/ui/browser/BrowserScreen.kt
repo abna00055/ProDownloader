@@ -308,6 +308,7 @@ fun BrowserScreen(
                                 if (url != null) {
                                     urlInput = url
                                     currentUrl = url
+                                    sniffedUrlsState.clear()
                                 }
                             }
 
@@ -445,7 +446,7 @@ fun BrowserScreen(
                                 text = selectedM3u8Media?.name ?: "",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.outline,
-                                maxLines = 1,
+                                maxLines = 3,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -622,7 +623,7 @@ fun BrowserScreen(
                                             text = item.name,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp,
-                                            maxLines = 1,
+                                            maxLines = 3,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
