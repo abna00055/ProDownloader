@@ -209,7 +209,12 @@ fun MainContainerScreen(
                 // شاشة المتصفح الذكي وقانص الفيديو
                 composable("browser") {
                     BrowserScreen(
-                        downloadViewModel = viewModel
+                        downloadViewModel = viewModel,
+                        onNavigateToDownloads = {
+                            navController.navigate("downloads") {
+                                popUpTo("downloads") { inclusive = true }
+                            }
+                        }
                     )
                 }
 

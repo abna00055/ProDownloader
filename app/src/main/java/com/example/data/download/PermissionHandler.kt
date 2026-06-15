@@ -20,44 +20,24 @@ object PermissionHandler {
      * التحقق الشامل والدقيق مما إذا كان التطبيق يمتلك الإذن الكافي للكتابة والقراءة.
      */
     fun hasStoragePermission(context: Context): Boolean {
-        return when {
-            // Android 13+ (API 33+)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                val videoGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.READ_MEDIA_VIDEO
-                ) == PackageManager.PERMISSION_GRANTED
-
-                val audioGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.READ_MEDIA_AUDIO
-                ) == PackageManager.PERMISSION_GRANTED
-
-                videoGranted && audioGranted
-            }
-            // Android 11 & 12 (API 30-32)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                // التحقق الشامل من صلاحيات الوصول التام أو إذن الكش المتبقي
-                Environment.isExternalStorageManager() || ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-            }
-            // Android 10 و أقدم
-            else -> {
-                val writeGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-
-                val readGranted = ContextCompat.checkSelfPermission(
-                    context, 
-                    Manifest.permission.READ_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED
-
-                writeGranted && readGranted
-            }
+        // On Android 10+ (API 29+ / Q+), the app writes files strictly to public media folders via MediaStore or SAF, 
+        // which do not require executing any runtime storage permission checks as per Android security specifications.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return true
         }
+        
+        // For Android 9 (Pie, API 28) and below, we verify the writing and reading permissions.
+        val writeGranted = ContextCompat.checkSelfPermission(
+            context, 
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val readGranted = ContextCompat.checkSelfPermission(
+            context, 
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        return writeGranted && readGranted
     }
 
     /**

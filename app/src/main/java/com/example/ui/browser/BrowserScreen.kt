@@ -61,7 +61,8 @@ import java.net.URL
 @Composable
 fun BrowserScreen(
     downloadViewModel: DownloadViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToDownloads: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -296,7 +297,31 @@ fun BrowserScreen(
                                 super.onPageFinished(view, url)
                                 isPageLoading = false
                                 if (url != null) {
-                                    pageTitle = view?.title ?: "متصفح الويب"
+                                    val title = view?.title ?: "متصفح الويب"
+                                    pageTitle = title
+                                    
+                                    // If we are on a known video page (like YouTube watch, TikTok, Vimeo, Twitch video), 
+                                    // we register the webpage itself in the sniffed list so that clicking "تحميل" on it 
+                                    // will let our high-fidelity YoutubeDL extract its exact resolution choices.
+                                    val cleanUrl = url.lowercase()
+                                    if (cleanUrl.contains("youtube.com/watch") || cleanUrl.contains("youtu.be") || 
+                                        cleanUrl.contains("vimeo.com") || cleanUrl.contains("tiktok.com") || 
+                                        cleanUrl.contains("facebook.com/watch") || cleanUrl.contains("twitch.tv")
+                                    ) {
+                                        val cleanTitle = if (title.contains("YouTube")) title else "$title (فيديو أصلي)"
+                                        val existing = sniffedUrlsState.find { it.url == url }
+                                        if (existing == null) {
+                                            sniffedUrlsState.add(
+                                                SniffedMedia(
+                                                    name = cleanTitle,
+                                                    url = url,
+                                                    mimeType = "رابط يوتيوب/فيديو ذكي جودة متعددة",
+                                                    cookie = try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (e: Exception) { null },
+                                                    userAgent = view?.settings?.userAgentString
+                                                )
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
@@ -441,6 +466,7 @@ fun BrowserScreen(
                                             downloadViewModel.triggerPrefilledUrl(option.url, selectedM3u8Media?.cookie, selectedM3u8Media?.userAgent)
                                             showSnifferSheet = false
                                             Toast.makeText(context, "تم تحديد الجودة المتفرعة: ${option.label}", Toast.LENGTH_SHORT).show()
+                                            onNavigateToDownloads?.invoke()
                                         }
                                 ) {
                                     Row(
@@ -611,6 +637,7 @@ fun BrowserScreen(
                                                 downloadViewModel.triggerPrefilledUrl(item.url, item.cookie, item.userAgent)
                                                 showSnifferSheet = false
                                                 Toast.makeText(context, "تم تجهيز الملف للإدراج بقنوات تحميل تفرعية متعددة", Toast.LENGTH_SHORT).show()
+                                                onNavigateToDownloads?.invoke()
                                             }
                                         },
                                         contentPadding = PaddingValues(horizontal = 14.dp),
@@ -676,11 +703,14 @@ fun sniffUrl(
 ) {
     val cleanUrl = url.lowercase().trim()
 
-    // فلاتر ذكية للتخلص من الإعلانات والإشارات الوهمية والروابط غير المفيدة
+    // فلاتر ذكية للتخلص من الإعلانات والإشارات الوهمية والروابط غير المفيدة والأصوات القصيرة للواجهة
     val blacklist = listOf(
         "blank", "ad", "placeholder", "track", "analytics", 
         "doubleclick", "google-analytics", "facebook.com", 
-        "googleads", "adsbygoogle", "telemetry", "metric", "logger"
+        "googleads", "adsbygoogle", "telemetry", "metric", "logger",
+        "success.mp3", "failure.mp3", "open.mp3", "no_input.mp3", 
+        "click.mp3", "pop.mp3", "bell.mp3", "beep.mp3", "sound-effect",
+        "sound_effect", "interaction", "tap.mp3", "button.mp3"
     )
     if (blacklist.any { cleanUrl.contains(it) }) {
         return
