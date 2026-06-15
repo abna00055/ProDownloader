@@ -166,9 +166,26 @@ class DownloadService : Service() {
                 )
                 app.downloadDao.update(updatedItem)
                 Log.e(TAG, "المتحقق بـ DownloadService كشف عن رمز استجابة غير صالح ($code) للرابط: ${item.url}")
+            } else {
+                // إذا نجح الفحص أو رجع برمز غير صفري، نغير الحالة لـ QUEUED للتفعيل الفوري
+                updatedItem = item.copy(
+                    status = DownloadStatus.QUEUED,
+                    errorMessage = null
+                )
+                app.downloadDao.update(updatedItem)
             }
         } catch (e: Exception) {
             Log.e(TAG, "فشل فحص الرابط بـ DownloadService: ${e.message}")
+            // حتى لو فشل الفحص الاستباقي لعدم توفر شبكة مؤقتاً، ننزله كـ QUEUED ليعالجه محرك التحميل ذكياً بالمحاولات
+            updatedItem = item.copy(
+                status = DownloadStatus.QUEUED,
+                errorMessage = null
+            )
+            try {
+                app.downloadDao.update(updatedItem)
+            } catch (ex: Exception) {
+                Log.e(TAG, "فشل تحديث قاعدة البيانات في الاستثناء: ${ex.message}")
+            }
         }
         return updatedItem
     }

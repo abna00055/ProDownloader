@@ -768,7 +768,8 @@ class DownloadManager(
 
             val body = response.body ?: return@withContext false
             val inputStream: InputStream = body.byteStream()
-            val outputStream = FileOutputStream(partFile, true) // وضع الإلحاق (Append) لـ Resume
+            val isPartial = response.code == 206
+            val outputStream = FileOutputStream(partFile, isPartial) // وضع الإلحاق (Append) فقط إذا كان السيرفر يدعم 206 ويستكمل فعلاً. وإلا يتم البدء من جديد لتجنب تلف الملف وعلاقته بالتكرار.
 
             val buffer = ByteArray(8192)
             var bytesRead: Int

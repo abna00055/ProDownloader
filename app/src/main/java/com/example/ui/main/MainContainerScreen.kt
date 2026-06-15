@@ -85,7 +85,9 @@ fun MainContainerScreen(
                             onClick = {
                                 if (currentRoute != "downloads") {
                                     navController.navigate("downloads") {
-                                        popUpTo("downloads") { inclusive = true }
+                                        popUpTo("downloads") { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
                                 }
                             },
@@ -212,7 +214,9 @@ fun MainContainerScreen(
                         downloadViewModel = viewModel,
                         onNavigateToDownloads = {
                             navController.navigate("downloads") {
-                                popUpTo("downloads") { inclusive = true }
+                                popUpTo("downloads") { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
                             }
                         }
                     )

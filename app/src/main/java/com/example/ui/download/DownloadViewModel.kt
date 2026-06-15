@@ -60,6 +60,17 @@ class DownloadViewModel(
     private val _prefilledUserAgentFlow = MutableStateFlow<String?>(null)
     val prefilledUserAgentFlow = _prefilledUserAgentFlow.asStateFlow()
 
+    // متغيرات لتسجيل حالة متصفح الويب بشكل دائم وتفادي إعادة تشغيله أو تصفيره عند كبس أزرار التنقل السفلي
+    var browserUrlInput: String = "https://www.google.com"
+    var browserCurrentUrl: String = "https://www.google.com"
+    var browserPageTitle: String = "جوجل"
+    private var webViewBundle: android.os.Bundle? = null
+
+    fun getWebViewBundle(): android.os.Bundle? = webViewBundle
+    fun setWebViewBundle(bundle: android.os.Bundle) {
+        webViewBundle = bundle
+    }
+
     fun triggerPrefilledUrl(url: String, cookie: String? = null, userAgent: String? = null) {
         _prefilledUrlFlow.value = url
         _prefilledCookieFlow.value = cookie

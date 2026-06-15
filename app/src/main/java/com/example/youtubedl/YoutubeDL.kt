@@ -154,11 +154,36 @@ class YoutubeDL private constructor() {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val html = response.body?.string() ?: ""
+                    
+                    // مصفوفة تعبيرات قياسية لاستخراج اسم الفيديو الحقيقي والكامل بدقة
+                    val ogRegex = """<meta\s+[^>]*property=["']og:title["']\s+content=["']([^"']+)["']""".toRegex(RegexOption.IGNORE_CASE)
+                    val ogRegexAlt = """<meta\s+[^>]*content=["']([^"']+)["']\s+property=["']og:title["']""".toRegex(RegexOption.IGNORE_CASE)
+                    val twitterRegex = """<meta\s+[^>]*name=["']twitter:title["']\s+content=["']([^"']+)["']""".toRegex(RegexOption.IGNORE_CASE)
                     val titleRegex = "<title>(.*?)</title>".toRegex(RegexOption.IGNORE_CASE)
-                    val matchResult = titleRegex.find(html)
-                    if (matchResult != null) {
-                        var rawTitle = matchResult.groupValues[1].trim()
-                        // فك تشفير رموز الـ HTML المعروفة مثل &amp; و &quot;
+
+                    var rawTitle = ""
+                    
+                    val ogMatch = ogRegex.find(html) ?: ogRegexAlt.find(html)
+                    if (ogMatch != null) {
+                        rawTitle = ogMatch.groupValues[1].trim()
+                    }
+                    
+                    if (rawTitle.isEmpty()) {
+                        val twMatch = twitterRegex.find(html)
+                        if (twMatch != null) {
+                            rawTitle = twMatch.groupValues[1].trim()
+                        }
+                    }
+                    
+                    if (rawTitle.isEmpty()) {
+                        val tMatch = titleRegex.find(html)
+                        if (tMatch != null) {
+                            rawTitle = tMatch.groupValues[1].trim()
+                        }
+                    }
+
+                    if (rawTitle.isNotEmpty()) {
+                        // فك تشفير ترميزات الـ HTML المتنوعة
                         rawTitle = rawTitle
                             .replace("&amp;", "&")
                             .replace("&quot;", "\"")
@@ -166,8 +191,10 @@ class YoutubeDL private constructor() {
                             .replace("&#39;", "'")
                             .replace("&lt;", "<")
                             .replace("&gt;", ">")
+                            .replace("&#160;", " ")
+                            .replace("&nbsp;", " ")
                         
-                        // تنظيف اللواحق الشهيرة
+                        // تنظيف اللواحق التجارية من الاسم
                         rawTitle = rawTitle
                             .replace(" - YouTube", "", ignoreCase = true)
                             .replace("YouTube", "", ignoreCase = true)

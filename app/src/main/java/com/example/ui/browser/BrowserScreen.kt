@@ -68,13 +68,31 @@ fun BrowserScreen(
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
-    var urlInput by remember { mutableStateOf("https://www.google.com") }
-    var currentUrl by remember { mutableStateOf("https://www.google.com") }
-    var pageTitle by remember { mutableStateOf("جوجل") }
+    var urlInput by remember { mutableStateOf(downloadViewModel.browserUrlInput) }
+    var currentUrl by remember { mutableStateOf(downloadViewModel.browserCurrentUrl) }
+    var pageTitle by remember { mutableStateOf(downloadViewModel.browserPageTitle) }
     var pageProgress by remember { mutableStateOf(0) }
     var isPageLoading by remember { mutableStateOf(false) }
 
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+
+    // مزامنة حالة المتصفح السريعة مع الـ ViewModel للحفاظ عليها عند التنقل
+    LaunchedEffect(urlInput, currentUrl, pageTitle) {
+        downloadViewModel.browserUrlInput = urlInput
+        downloadViewModel.browserCurrentUrl = currentUrl
+        downloadViewModel.browserPageTitle = pageTitle
+    }
+
+    // تفعيل حفظ حالة الـ WebView بالكامل فور مغادرة الصفحة أو الانتقال لتبويب آخر
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewInstance?.let { webView ->
+                val bundle = android.os.Bundle()
+                webView.saveState(bundle)
+                downloadViewModel.setWebViewBundle(bundle)
+            }
+        }
+    }
 
     // الاستماع للرابط الممرر للتصفح التلقائي عند التحويل للـ Fallback
     val prefilledUrlState by downloadViewModel.prefilledUrlFlow.collectAsStateWithLifecycle()
@@ -300,6 +318,11 @@ fun BrowserScreen(
                                     val title = view?.title ?: "متصفح الويب"
                                     pageTitle = title
                                     
+                                    // حفظ حالة الـ WebView دورياً عند تحميل الصفحة بنجاح
+                                    val bundle = android.os.Bundle()
+                                    view?.saveState(bundle)
+                                    downloadViewModel.setWebViewBundle(bundle)
+                                    
                                     // If we are on a known video page (like YouTube watch, TikTok, Vimeo, Twitch video), 
                                     // we register the webpage itself in the sniffed list so that clicking "تحميل" on it 
                                     // will let our high-fidelity YoutubeDL extract its exact resolution choices.
@@ -318,7 +341,7 @@ fun BrowserScreen(
                                                     mimeType = "رابط يوتيوب/فيديو ذكي جودة متعددة",
                                                     cookie = try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (e: Exception) { null },
                                                     userAgent = view?.settings?.userAgentString
-                                                )
+                                                 )
                                             )
                                         }
                                     }
@@ -335,7 +358,7 @@ fun BrowserScreen(
                                         null
                                     }
                                     val userAgent = view?.settings?.userAgentString
-                                    sniffUrl(url, sniffedUrlsState, scope, cookie, userAgent)
+                                    sniffUrl(url, sniffedUrlsState, scope, cookie, userAgent, pageTitle)
                                 }
                             }
 
@@ -358,13 +381,19 @@ fun BrowserScreen(
                                     } catch (e: Exception) {
                                         null
                                     }
-                                    sniffUrl(reqUrl, sniffedUrlsState, scope, cookie, userAgent)
+                                    sniffUrl(reqUrl, sniffedUrlsState, scope, cookie, userAgent, pageTitle)
                                 }
                                 return super.shouldInterceptRequest(view, request)
                             }
                         }
 
-                        loadUrl(currentUrl)
+                        // محاولة استعادة الحالة الكاملة المحفوظة مسبقاً من الـ ViewModel لضمان بقاء الصفحات وسجل التنقل
+                        val savedBundle = downloadViewModel.getWebViewBundle()
+                        if (savedBundle != null) {
+                            restoreState(savedBundle)
+                        } else {
+                            loadUrl(currentUrl)
+                        }
                         webViewInstance = this
                     }
                 },
@@ -699,7 +728,8 @@ fun sniffUrl(
     sniffedList: MutableList<SniffedMedia>,
     scope: CoroutineScope,
     cookie: String? = null,
-    userAgent: String? = null
+    userAgent: String? = null,
+    pageTitle: String = ""
 ) {
     val cleanUrl = url.lowercase().trim()
 
@@ -738,8 +768,33 @@ fun sniffUrl(
         val existingUrls = sniffedList.map { it.url }.toSet()
         if (!existingUrls.contains(url)) {
             val guessedName = guessNameFromUrl(url)
+            val finalName = if (pageTitle.isNotEmpty() && pageTitle != "متصفح الويب") {
+                var cleanTitle = pageTitle.replace("[\\\\/:*?\"<>|]".toRegex(), "_")
+                    .replace("&amp;", "&")
+                    .replace("&quot;", "\"")
+                    .replace("&apos;", "'")
+                    .replace("&#39;", "'")
+                    .replace(" - YouTube", "", ignoreCase = true)
+                    .replace("YouTube", "", ignoreCase = true)
+                    .replace(" - Vimeo", "", ignoreCase = true)
+                    .replace("TikTok", "", ignoreCase = true)
+                    .trim()
+                if (cleanTitle.isNotEmpty()) {
+                    val ext = if (url.lowercase().contains(".m3u8")) "m3u8"
+                              else if (url.lowercase().contains(".mp3")) "mp3"
+                              else if (url.lowercase().contains(".m4a")) "m4a"
+                              else if (url.lowercase().contains(".webm")) "webm"
+                              else "mp4"
+                    "$cleanTitle.$ext"
+                } else {
+                    guessedName
+                }
+            } else {
+                guessedName
+            }
+
             val media = SniffedMedia(
-                name = guessedName,
+                name = finalName,
                 url = url,
                 mimeType = "فيديو / بث شبكي مباشر",
                 cookie = cookie,
@@ -770,12 +825,34 @@ fun sniffUrl(
                             contentType.contains("application/vnd.apple.mpegurl")
                         ) {
                             val guessedName = guessNameFromUrl(url)
+                            val finalName = if (pageTitle.isNotEmpty() && pageTitle != "متصفح الويب") {
+                                var cleanTitle = pageTitle.replace("[\\\\/:*?\"<>|]".toRegex(), "_")
+                                    .replace("&amp;", "&")
+                                    .replace("&quot;", "\"")
+                                    .replace("&apos;", "'")
+                                    .replace("&#39;", "'")
+                                    .replace(" - YouTube", "", ignoreCase = true)
+                                    .replace("YouTube", "", ignoreCase = true)
+                                    .replace(" - Vimeo", "", ignoreCase = true)
+                                    .replace("TikTok", "", ignoreCase = true)
+                                    .trim()
+                                if (cleanTitle.isNotEmpty()) {
+                                    val ext = if (contentType.contains("mpegurl") || url.lowercase().contains(".m3u8")) "m3u8"
+                                              else if (contentType.contains("audio/") || url.lowercase().contains(".mp3")) "mp3"
+                                              else "mp4"
+                                    "$cleanTitle.$ext"
+                                } else {
+                                    guessedName
+                                }
+                            } else {
+                                guessedName
+                            }
                             withContext(Dispatchers.Main) {
                                 val currentUrls = sniffedList.map { it.url }.toSet()
                                 if (!currentUrls.contains(url)) {
                                     sniffedList.add(
                                         SniffedMedia(
-                                            name = guessedName,
+                                            name = finalName,
                                             url = url,
                                             mimeType = contentType,
                                             cookie = cookie,
